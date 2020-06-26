@@ -1208,6 +1208,58 @@ struct ike_sa_t {
 	 * Destroys a ike_sa_t object.
 	 */
 	void (*destroy) (ike_sa_t *this);
+
+#ifdef VOWIFI_CFG
+	/**
+	* Get operator type
+	*/
+	int (*get_operator)(ike_sa_t *this);
+
+	/**
+	* Set handover flag
+	*/
+	void (*set_handover)(ike_sa_t *this, int status);
+
+	/**
+	* Get handover flag
+	*/
+	int (*is_handover)(ike_sa_t *this);
+
+	/**
+	* Set termination flag
+	*/
+	void (*set_terminate)(ike_sa_t *this);
+
+	/**
+	* Get termination flag
+	*/
+	int (*is_terminated_from_service)(ike_sa_t *this);
+
+	/**
+	* Install VIP during handover
+	*/
+	void (*install_vip)(ike_sa_t *this);
+
+	/**
+	* Wait until VIP installed
+	*/
+	void (*wait_for_installed_vip)(ike_sa_t *this);
+
+	/**
+	 * Get virtual device name
+	 */
+	char* (*get_tun_name)(ike_sa_t *this);
+
+	/**
+	 * Get TUN device MTU
+	*/
+	int (*get_mtu)(ike_sa_t *this);
+
+        /**
+	* Get IP attributes
+	*/
+	char* (*get_ip_configuration_attribute)(ike_sa_t *this, configuration_attribute_type_t type, int cnt);
+#endif
 };
 
 /**

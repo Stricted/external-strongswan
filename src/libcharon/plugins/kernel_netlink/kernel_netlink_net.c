@@ -2463,6 +2463,9 @@ METHOD(kernel_net_t, add_ip, status_t,
 		.ip = virtual_ip,
 	};
 	iface_entry_t *iface = NULL;
+#ifdef VOWIFI_CFG
+	bool installed = FALSE;
+#endif
 
 	if (!this->install_virtual_ip)
 	{	/* disabled by config */
@@ -2498,22 +2501,67 @@ METHOD(kernel_net_t, add_ip, status_t,
 	}
 	if (entry)
 	{
+#ifdef VOWIFI_CFG
+		DBG1(DBG_KNL, "virtual IP %H is already installed on %s", virtual_ip,
+			entry->iface->ifname);
+		installed = TRUE;
+#else
 		DBG2(DBG_KNL, "virtual IP %H is already installed on %s", virtual_ip,
 			 entry->iface->ifname);
 		this->lock->unlock(this->lock);
 		return SUCCESS;
+#endif
 	}
 	/* try to find the target interface, either by config or via src ip */
 	if (!this->install_virtual_ip_on ||
 		!this->ifaces->find_first(this->ifaces, iface_entry_by_name,
 								 (void**)&iface, this->install_virtual_ip_on))
 	{
+#ifndef VOWIFI_CFG
 		if (!this->ifaces->find_first(this->ifaces, iface_entry_by_name,
 									 (void**)&iface, iface_name))
 		{	/* if we don't find the requested interface we just use the first */
 			this->ifaces->get_first(this->ifaces, (void**)&iface);
 		}
+#else
+		int cnt = 0;
+
+		while (!this->ifaces->find_first(this->ifaces, iface_entry_by_name,
+									 (void**)&iface, iface_name)) {
+			DBG1(DBG_KNL, "interface not found, waiting, %d", cnt);
+			this->lock->unlock(this->lock);
+
+			usleep(2000); cnt++;
+
+			this->lock->write_lock(this->lock);
+			if (cnt > 10) break;
+		}
+		if (iface == NULL) {
+			DBG1(DBG_KNL, "add_ip failed, did not find interface");
+
+			this->lock->unlock(this->lock);
+			return FAILED;
+		}
+#endif
 	}
+	DBG1(DBG_KNL, "Selected interface: %s", (iface == NULL) ? "none" : iface->ifname);
+#ifdef VOWIFI_CFG
+	if (installed && iface)
+	{
+		DBG1(DBG_KNL, "Comparing: %s and %s", entry->iface->ifname, iface->ifname);
+		if (strcmp(entry->iface->ifname, iface->ifname) == 0)
+		{
+			DBG1(DBG_KNL, "IP already present on required interface. Returning success");
+
+			this->lock->unlock(this->lock);
+			return SUCCESS;
+		}
+	}
+	else
+	{
+		DBG1(DBG_KNL, "Virtual IP is not installed on any interface");
+	}
+#endif
 	if (iface)
 	{
 		addr_entry_t *addr;

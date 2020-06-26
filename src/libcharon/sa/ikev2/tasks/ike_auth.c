@@ -1232,6 +1232,7 @@ METHOD(task_t, process_i, status_t,
 
 			switch (type)
 			{
+#ifndef VOWIFI_CFG
 				case NO_PROPOSAL_CHOSEN:
 				case SINGLE_PAIR_REQUIRED:
 				case NO_ADDITIONAL_SAS:
@@ -1242,6 +1243,7 @@ METHOD(task_t, process_i, status_t,
 					/* these are errors, but are not critical as only the
 					 * CHILD_SA won't get build, but IKE_SA establishes anyway */
 					break;
+#endif
 				case MOBIKE_SUPPORTED:
 				case ADDITIONAL_IP4_ADDRESS:
 				case ADDITIONAL_IP6_ADDRESS:
@@ -1273,10 +1275,23 @@ METHOD(task_t, process_i, status_t,
 				{
 					if (type <= 16383)
 					{
+#ifdef VOWIFI_CFG
+						int timer_val = 0;
+						notify_payload_t* notify = message->get_notify(message, BACKOFF_TIMER);
+						if (notify)
+						{
+							chunk_t data = notify->get_notification_data(notify);
+							/* skip first bype, it is length */
+							timer_val = data.ptr[1];
+						}
+#endif
 						DBG1(DBG_IKE, "received %N notify error",
 							 notify_type_names, type);
 						enumerator->destroy(enumerator);
 						charon->bus->alert(charon->bus, ALERT_LOCAL_AUTH_FAILED);
+#ifdef VOWIFI_CFG
+						charon->bus->alert(charon->bus, ALERT_NETWORK_FAILURE, type, timer_val);
+#endif
 						return FAILED;
 					}
 					DBG2(DBG_IKE, "received %N notify",
@@ -1294,7 +1309,9 @@ METHOD(task_t, process_i, status_t,
 		{
 			id_payload_t *id_payload;
 			identification_t *id;
-
+#ifdef VOWIFI_CFG
+			ike_cfg_t *ike_cfg;
+#endif
 			/* handle IDr payload */
 			id_payload = (id_payload_t*)message->get_payload(message,
 															 PLV2_ID_RESPONDER);
@@ -1309,7 +1326,13 @@ METHOD(task_t, process_i, status_t,
 			cfg = this->ike_sa->get_auth_cfg(this->ike_sa, FALSE);
 			cfg->add(cfg, AUTH_RULE_IDENTITY, id->clone(id));
 
+#ifdef VOWIFI_CFG
+			ike_cfg = this->ike_sa->get_ike_cfg(this->ike_sa);
+			DBG1(DBG_IKE, "Remote certificate requested: %d", ike_cfg->send_certreq(ike_cfg));
+			if (ike_cfg->send_certreq(ike_cfg) && message->get_payload(message, PLV2_AUTH))
+#else
 			if (message->get_payload(message, PLV2_AUTH))
+#endif
 			{
 				/* verify authentication data */
 				this->other_auth = authenticator_create_verifier(this->ike_sa,

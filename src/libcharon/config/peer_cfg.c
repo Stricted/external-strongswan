@@ -192,6 +192,28 @@ struct private_peer_cfg_t {
 	 */
 	identification_t *peer_id;
 #endif /* ME */
+
+#ifdef VOWIFI_CFG
+	/** Keep Alive Interval in Seconds */
+	int keepalive_interval;
+
+	/**
+	*  Original TSi flag
+	*/
+	int use_original_ts;
+
+	/** Operator type */
+	int operator;
+
+	/** Handover flag */
+	int handover;
+
+	/** Interface name */
+	char* interface;
+
+	/** Rekey on roaming preference flag */
+	int rekey_pref;
+#endif
 };
 
 METHOD(peer_cfg_t, get_name, char*,
@@ -749,6 +771,81 @@ METHOD(peer_cfg_t, get_ref, peer_cfg_t*,
 	ref_get(&this->refcount);
 	return &this->public;
 }
+#ifdef VOWIFI_CFG
+METHOD(peer_cfg_t, set_keepalive_interval, void,
+	private_peer_cfg_t *this, int interval)
+{
+	this->keepalive_interval = interval;
+}
+
+METHOD(peer_cfg_t, get_keepalive_interval, int,
+	private_peer_cfg_t *this)
+{
+	return this->keepalive_interval;
+}
+
+
+METHOD(peer_cfg_t, set_use_original_ts, void,
+	private_peer_cfg_t *this, int value)
+{
+	this->use_original_ts = value;
+}
+
+METHOD(peer_cfg_t, use_original_ts, int,
+	private_peer_cfg_t *this)
+{
+	return this->use_original_ts;
+}
+
+METHOD(peer_cfg_t, set_operator, void,
+	private_peer_cfg_t *this, int op)
+{
+	this->operator = op;
+}
+
+METHOD(peer_cfg_t, get_operator, int,
+	private_peer_cfg_t *this)
+{
+	return this->operator;
+}
+
+METHOD(peer_cfg_t, set_handover, void,
+	private_peer_cfg_t *this, int status)
+{
+	this->handover = status;
+}
+
+METHOD(peer_cfg_t, get_handover, int,
+	private_peer_cfg_t *this)
+{
+	return this->handover;
+}
+
+METHOD(peer_cfg_t, set_interface_name, void,
+	private_peer_cfg_t *this, char* name)
+{
+	if (this->interface) free(this->interface);
+	this->interface = strdup(name);
+}
+
+METHOD(peer_cfg_t, get_interface_name, char*,
+	private_peer_cfg_t *this)
+{
+	return this->interface;
+}
+
+METHOD(peer_cfg_t, set_do_rekey_on_roam, void,
+	private_peer_cfg_t *this, int status)
+{
+	this->rekey_pref = status;
+}
+
+METHOD(peer_cfg_t, get_do_rekey_on_roam, int,
+	private_peer_cfg_t *this)
+{
+	return this->rekey_pref;
+}
+#endif
 
 METHOD(peer_cfg_t, destroy, void,
 	private_peer_cfg_t *this)
@@ -829,6 +926,20 @@ peer_cfg_t *peer_cfg_create(char *name, ike_cfg_t *ike_cfg,
 			.equals = (void*)_equals,
 			.get_ref = _get_ref,
 			.destroy = _destroy,
+#ifdef VOWIFI_CFG
+			.set_keepalive_interval = _set_keepalive_interval,
+			.get_keepalive_interval = _get_keepalive_interval,
+			.set_use_original_ts = _set_use_original_ts,
+			.use_original_ts = _use_original_ts,
+			.set_operator = _set_operator,
+			.get_operator = _get_operator,
+			.set_handover = _set_handover,
+			.is_handover = _get_handover,
+			.set_interface = _set_interface_name,
+			.get_interface = _get_interface_name,
+			.set_do_rekey_on_roam = _set_do_rekey_on_roam,
+			.is_rekey_preferred = _get_do_rekey_on_roam,
+#endif
 #ifdef ME
 			.is_mediation = _is_mediation,
 			.get_mediated_by = _get_mediated_by,
@@ -866,6 +977,5 @@ peer_cfg_t *peer_cfg_create(char *name, ike_cfg_t *ike_cfg,
 		.peer_id = data->peer_id,
 #endif /* ME */
 	);
-
 	return &this->public;
 }

@@ -375,7 +375,9 @@ bool library_init(char *settings, const char *namespace)
 
 	this->objects = hashtable_create((hashtable_hash_t)hash,
 									 (hashtable_equals_t)equals, 4);
-
+#ifdef VOWIFI_STRONGSWAN_5_8_2
+	this->public.settings = settings_create(this->public.conf);
+#else
 	this->public.settings = settings_create(NULL);
 	if (!this->public.settings->load_files(this->public.settings,
 										   this->public.conf, FALSE))
@@ -383,7 +385,7 @@ bool library_init(char *settings, const char *namespace)
 		DBG1(DBG_LIB, "abort initialization due to invalid configuration");
 		this->init_failed = TRUE;
 	}
-
+#endif
 	/* add registered aliases */
 	for (i = 0; i < ns_count; ++i)
 	{

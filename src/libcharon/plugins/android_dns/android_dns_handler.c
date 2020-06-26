@@ -152,6 +152,27 @@ METHOD(attribute_handler_t, handle, bool,
 			}
 			return FALSE;
 		}
+#ifdef VOWIFI_CFG
+        case INTERNAL_IP6_DNS:
+        {
+            host_t *dns;
+            dns_pair_t *pair;
+            int index;
+
+            dns = host_create_from_chunk(AF_INET6, data, 0);
+            if (dns)
+            {
+                pair = malloc_thing(dns_pair_t);
+                pair->dns = dns;
+                index = this->dns->get_count(this->dns) + 1;
+                pair->old = get_dns_server(this, index);
+                set_dns_server(this, index, dns);
+                this->dns->insert_last(this->dns, pair);
+                return TRUE;
+            }
+            return FALSE;
+        }
+#endif
 		default:
 			return FALSE;
 	}
@@ -161,7 +182,11 @@ METHOD(attribute_handler_t, release, void,
 	private_android_dns_handler_t *this, ike_sa_t *ike_sa,
 	configuration_attribute_type_t type, chunk_t data)
 {
+#ifdef VOWIFI_CFG
+	if (type == INTERNAL_IP4_DNS || type == INTERNAL_IP6_DNS )
+#else
 	if (type == INTERNAL_IP4_DNS)
+#endif
 	{
 		enumerator_t *enumerator;
 		dns_pair_t *pair;
@@ -188,10 +213,16 @@ METHOD(enumerator_t, enumerate_dns, bool,
 	chunk_t *data;
 
 	VA_ARGS_VGET(args, type, data);
+#ifdef VOWIFI_CFG
+	/* stop enumeration */
+	this->venumerate = return_false;
+	return FALSE;
+#else
 	*type = INTERNAL_IP4_DNS;
 	*data = chunk_empty;
 	this->venumerate = return_false;
 	return TRUE;
+#endif
 }
 
 METHOD(attribute_handler_t, create_attribute_enumerator, enumerator_t *,

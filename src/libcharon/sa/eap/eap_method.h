@@ -147,6 +147,14 @@ struct eap_method_t {
 	 * @return				auth method, internal data
 	 */
 	auth_cfg_t* (*get_auth)(eap_method_t *this);
+#ifdef VOWIFI_CFG
+	/**
+	* Provide IKE SA name to authenticator
+	*
+	* Required to send challenge to correct SIM slot
+	*/
+	void (*set_sa_name) (eap_method_t *this, char *name);
+#endif
 
 	/**
 	 * Destroys a eap_method_t object.

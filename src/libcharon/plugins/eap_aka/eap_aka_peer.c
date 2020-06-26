@@ -78,6 +78,12 @@ struct private_eap_aka_peer_t {
 	 * Counter value if reauthentication is used
 	 */
 	uint16_t counter;
+#ifdef VOWIFI_CFG
+	/**
+	* IKE SA name
+	*/
+	char* sa_name;
+#endif
 };
 
 /**
@@ -254,7 +260,11 @@ static status_t process_challenge(private_eap_aka_peer_t *this,
 	}
 
 	status = this->mgr->card_get_quintuplet(this->mgr, this->permanent,
-									rand.ptr, autn.ptr, ck, ik, res, &res_len);
+#ifndef VOWIFI_CFG
+							rand.ptr, autn.ptr, ck, ik, res, &res_len);
+#else
+							rand.ptr, autn.ptr, ck, ik, res, &res_len, this->sa_name);
+#endif
 	if (status == INVALID_STATE &&
 		this->mgr->card_resync(this->mgr, this->permanent, rand.ptr, auts))
 	{
@@ -640,6 +650,14 @@ METHOD(eap_method_t, destroy, void,
 	free(this);
 }
 
+#ifdef VOWIFI_CFG
+METHOD(eap_method_t, set_sa_name, void,
+	private_eap_aka_peer_t *this, char* name)
+{
+	this->sa_name = name;
+}
+#endif
+
 /*
  * Described in header.
  */
@@ -658,6 +676,9 @@ eap_aka_peer_t *eap_aka_peer_create(identification_t *server,
 				.get_msk = _get_msk,
 				.get_identifier = _get_identifier,
 				.set_identifier = _set_identifier,
+#ifdef VOWIFI_CFG
+				.set_sa_name = _set_sa_name,
+#endif
 				.destroy = _destroy,
 			},
 		},

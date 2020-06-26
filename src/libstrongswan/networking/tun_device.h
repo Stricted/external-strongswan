@@ -25,6 +25,11 @@
 
 #include <networking/host.h>
 
+#ifdef VOWIFI_CFG
+#include <collections/enumerator.h>
+#include <collections/linked_list.h>
+#endif
+
 typedef struct tun_device_t tun_device_t;
 
 /**
@@ -68,8 +73,11 @@ struct tun_device_t {
 	 * @param netmask		pointer receiving the configured netmask, or NULL
 	 * @return				address previously set, NULL if none
 	 */
+#ifdef VOWIFI_CFG
+	enumerator_t* (*create_addresses_enumerator)(tun_device_t *this);
+#else
 	host_t* (*get_address)(tun_device_t *this, uint8_t *netmask);
-
+#endif
 	/**
 	 * Bring the TUN device up
 	 *
@@ -110,7 +118,6 @@ struct tun_device_t {
 	 * Destroy a tun_device_t
 	 */
 	void (*destroy)(tun_device_t *this);
-
 };
 
 /**

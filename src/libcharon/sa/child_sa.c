@@ -1454,7 +1454,11 @@ CALLBACK(reinstall_vip, void,
 	char *iface;
 
 	VA_ARGS_VGET(args, me);
+#ifndef VOWIFI_CFG
 	if (charon->kernel->get_interface(charon->kernel, me, &iface))
+#else
+	if (charon->kernel->get_interface(charon->kernel, vip, &iface))
+#endif
 	{
 		charon->kernel->del_ip(charon->kernel, vip, -1, TRUE);
 		charon->kernel->add_ip(charon->kernel, vip, -1, iface);

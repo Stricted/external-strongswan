@@ -61,6 +61,14 @@ enum configuration_attribute_type_t {
 	/* RFC 8598 */
 	INTERNAL_DNS_DOMAIN		= 25,
 	INTERNAL_DNSSEC_TA		= 26,
+#ifdef VOWIFI_CFG
+	P_CSCF_IP4_ADDRESS_OPR_TYPE_1		= 16384,
+	P_CSCF_IP6_ADDRESS_OPR_TYPE_1		= 16386,
+
+	P_CSCF_IP4_ADDRESS_OPR_TYPE_2		= 16389,
+	P_CSCF_IP6_ADDRESS_OPR_TYPE_2		= 16390,
+	DEVICE_IMEI			= 16391,
+#endif
 	/* XAUTH attributes */
 	XAUTH_TYPE              = 16520,
 	XAUTH_USER_NAME         = 16521,

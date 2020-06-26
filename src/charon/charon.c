@@ -159,7 +159,12 @@ static bool lookup_uid_gid()
 		return FALSE;
 	}
 #ifdef ANDROID
+#ifdef VOWIFI_CFG
+	DBG1(DBG_DMN, "Starting charon with ROOT privileges");
+	lib->caps->set_uid(lib->caps, AID_ROOT);
+#else
 	lib->caps->set_uid(lib->caps, AID_VPN);
+#endif
 #endif
 	return TRUE;
 }
@@ -431,6 +436,9 @@ int main(int argc, char *argv[])
 
 	if (check_pidfile())
 	{
+#ifdef VOWIFI_CFG
+		DBG1(DBG_DMN, "charon already running (\""PID_FILE"\" exists)");
+#endif
 		goto deinit;
 	}
 

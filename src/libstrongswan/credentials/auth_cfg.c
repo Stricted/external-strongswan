@@ -940,6 +940,7 @@ METHOD(auth_cfg_t, complies, bool,
 			case AUTH_RULE_AAA_IDENTITY:
 			case AUTH_RULE_XAUTH_IDENTITY:
 			{
+#ifndef VOWIFI_CFG
 				identification_t *id1, *id2;
 
 				id1 = (identification_t*)value;
@@ -965,6 +966,9 @@ METHOD(auth_cfg_t, complies, bool,
 							 "EAP ", id1);
 					}
 				}
+#else
+			DBG1(DBG_CFG,"Skipping IDENTITY Constraint Check. \n");
+#endif
 				break;
 			}
 			case AUTH_RULE_AUTH_CLASS:

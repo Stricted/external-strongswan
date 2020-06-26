@@ -642,6 +642,10 @@ static peer_cfg_t *build_peer_cfg(private_stroke_config_t *this,
 		.dpd_timeout = msg->add_conn.dpd.timeout,
 	};
 
+#ifdef VOWIFI_CFG
+	int handover = FALSE;
+#endif
+
 #ifdef ME
 	if (msg->add_conn.ikeme.mediation && msg->add_conn.ikeme.mediated_by)
 	{
@@ -833,6 +837,13 @@ static peer_cfg_t *build_peer_cfg(private_stroke_config_t *this,
 			}
 			else
 			{
+#ifdef VOWIFI_CFG
+				if (!handover)
+				{
+					DBG1(DBG_CFG, "Handover detected");
+					handover = TRUE;
+				}
+#endif
 				vip = host_create_from_string(token, 0);
 				if (!vip)
 				{
@@ -877,6 +888,19 @@ static peer_cfg_t *build_peer_cfg(private_stroke_config_t *this,
 	{
 		peer_cfg->add_auth_cfg(peer_cfg, auth_cfg, FALSE);
 	}
+
+#ifdef VOWIFI_CFG
+	DBG1(DBG_CFG, "Operator Type : %d \n", msg->add_conn.opr_type);
+	peer_cfg->set_operator(peer_cfg, msg->add_conn.opr_type);
+
+	DBG1(DBG_CFG, "Keepalive interval : %d \n", msg->add_conn.keepalive_interval);
+	peer_cfg->set_keepalive_interval(peer_cfg, msg->add_conn.keepalive_interval);
+
+	peer_cfg->set_interface(peer_cfg, msg->add_conn.interface);
+	peer_cfg->set_handover(peer_cfg, handover);
+	peer_cfg->set_use_original_ts(peer_cfg, msg->add_conn.options & OPT_USE_ORIGINAL_TS);
+	peer_cfg->set_do_rekey_on_roam(peer_cfg, msg->add_conn.options & OPT_DO_REKEY_ON_ROAM);
+#endif
 	return peer_cfg;
 }
 

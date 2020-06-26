@@ -142,6 +142,10 @@ processing/jobs/adopt_children_job.c processing/jobs/adopt_children_job.h
 libcharon_la_SOURCES += \
 	bus/listeners/sys_logger.c bus/listeners/sys_logger.h
 
+ifneq ($(strongswan_BUILD_VoWiFi),)
+libcharon_la_SOURCES += \
+	comm/comm_msg.c comm/alerts.c
+endif
 LOCAL_SRC_FILES := $(filter %.c,$(libcharon_la_SOURCES))
 
 # adding the plugin source files
@@ -169,6 +173,10 @@ ifneq ($(call plugin_enabled, eap-aka-3gpp2),)
 LOCAL_C_INCLUDES += $(libgmp_PATH)
 LOCAL_SHARED_LIBRARIES += libgmp
 endif
+ifneq ($(strongswan_BUILD_VoWiFi),)
+LOCAL_SRC_FILES += $(call add_plugin, eap-aka-3gpp-simril)
+endif
+
 
 LOCAL_SRC_FILES += $(call add_plugin, eap-gtc)
 
@@ -192,10 +200,10 @@ LOCAL_SRC_FILES += $(call add_plugin, eap-sim-file)
 ifneq ($(or $(call plugin_enabled, eap-aka), $(call plugin_enabled, eap-sim)),)
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/../libsimaka/
 LOCAL_SRC_FILES += $(addprefix ../libsimaka/, \
-		simaka_message.h simaka_message.c \
-		simaka_crypto.h simaka_crypto.c \
-		simaka_manager.h simaka_manager.c \
-		simaka_card.h simaka_provider.h simaka_hooks.h \
+		simaka_message.c \
+		simaka_crypto.c \
+		simaka_manager.c \
+		\
 	)
 endif
 
@@ -237,9 +245,14 @@ LOCAL_SRC_FILES += $(call add_plugin, socket-default)
 
 LOCAL_SRC_FILES += $(call add_plugin, socket-dynamic)
 
+LOCAL_SRC_FILES += $(call add_plugin, counters)
+
 LOCAL_SRC_FILES += $(call add_plugin, stroke)
 ifneq ($(call plugin_enabled, stroke),)
-LOCAL_C_INCLUDES += $(LOCAL_PATH)/../stroke/
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/../stroke/ $(LOCAL_PATH)/plugins/counters
+ifneq ($(strongswan_BUILD_VoWiFi),)
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/comm/
+endif
 endif
 
 # build libcharon --------------------------------------------------------------
@@ -255,7 +268,11 @@ LOCAL_MODULE_TAGS := optional
 
 LOCAL_ARM_MODE := arm
 
+LOCAL_PROPRIETARY_MODULE := true
+
 LOCAL_PRELINK_MODULE := false
+
+LOCAL_C_INCLUDES += system/core/include
 
 LOCAL_SHARED_LIBRARIES += libstrongswan
 

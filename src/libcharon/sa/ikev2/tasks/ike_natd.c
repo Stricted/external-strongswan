@@ -204,6 +204,13 @@ static void process_payloads(private_ike_natd_t *this, message_t *message)
 			{
 				this->dst_seen = TRUE;
 				hash = notify->get_notification_data(notify);
+#ifdef VOWIFI_CFG
+				if (hash.len == 0)
+				{
+					DBG1(DBG_IKE, "NAT_DETECTION_DESTINATION_IP is 0");
+					break;
+				}
+#endif
 				if (!this->dst_matched)
 				{
 					DBG3(DBG_IKE, "received dst_hash %B", &hash);
@@ -229,6 +236,13 @@ static void process_payloads(private_ike_natd_t *this, message_t *message)
 				if (!this->src_matched)
 				{
 					hash = notify->get_notification_data(notify);
+#ifdef VOWIFI_CFG
+					if (hash.len == 0)
+					{
+						DBG1(DBG_IKE, "NAT_DETECTION_SOURCE_IP is 0");
+						break;
+					}
+#endif
 					DBG3(DBG_IKE, "received src_hash %B", &hash);
 					if (chunk_equals(hash, src_hash))
 					{

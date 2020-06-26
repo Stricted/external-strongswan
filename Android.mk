@@ -14,11 +14,17 @@ include $(CLEAR_VARS)
 # strongswan_BUILD_STARTER := true
 # strongswan_BUILD_SCEPCLIENT := true
 
+strongswan_BUILD_VoWiFi:=true
+strongswan_BUILD_USE_BORINGSSL:=true
+
 # this is the list of plugins that are built into libstrongswan and charon
 # also these plugins are loaded by default (if not changed in strongswan.conf)
 strongswan_CHARON_PLUGINS := android-log openssl fips-prf random nonce pubkey \
 	pkcs1 pkcs8 pem xcbc hmac kernel-netlink socket-default android-dns \
-	stroke eap-identity eap-mschapv2 eap-md5 eap-gtc
+	counters stroke eap-identity eap-mschapv2 eap-md5 eap-gtc
+ifneq ($(strongswan_BUILD_VoWiFi),)
+strongswan_CHARON_PLUGINS +=  eap-aka eap-aka-3gpp-simril p-cscf ctr des
+endif
 
 ifneq ($(strongswan_BUILD_SCEPCLIENT),)
 # plugins loaded by scepclient
@@ -38,23 +44,36 @@ include $(LOCAL_PATH)/Android.common.mk
 strongswan_PATH := $(LOCAL_PATH)
 libcurl_PATH := external/strongswan-support/libcurl/include
 libgmp_PATH := external/strongswan-support/gmp
+ifneq ($(strongswan_BUILD_USE_BORINGSSL),)
+openssl_PATH := external/boringssl/include
+else
 openssl_PATH := external/openssl/include
+endif
 
 # some definitions
 strongswan_DIR := "/system/bin"
 strongswan_SBINDIR := "/system/bin"
-strongswan_PIDDIR := "/data/misc/vpn"
+strongswan_PIDDIR := "/data/vendor/misc/vpn"
 strongswan_PLUGINDIR := "$(strongswan_IPSEC_DIR)/ipsec"
 strongswan_CONFDIR := "/system/etc"
 strongswan_STRONGSWAN_CONF := "$(strongswan_CONFDIR)/strongswan.conf"
 
 # CFLAGS (partially from a configure run using droid-gcc)
 strongswan_CFLAGS := \
+	-Wno-error=typedef-redefinition \
+	-Wno-error=unused-parameter \
+	-Wno-error=unused-variable \
+	-Wno-error=unused-function \
+	-Wno-error=macro-redefined \
+	-Wno-error=implicit-function-declaration \
+	-Wno-error=incompatible-pointer-types \
+	-Wno-error=int-conversion \
 	-Wno-format \
 	-Wno-pointer-sign \
 	-Wno-pointer-arith \
 	-Wno-sign-compare \
 	-Wno-strict-aliasing \
+	-Wno-error=date-time \
 	-DHAVE___BOOL \
 	-DHAVE_STDBOOL_H \
 	-DHAVE_ALLOCA_H \
@@ -68,8 +87,6 @@ strongswan_CFLAGS := \
 	-DHAVE_IPSEC_DIR_FWD \
 	-DOPENSSL_NO_ENGINE \
 	-DCONFIG_H_INCLUDED \
-	-DCAPABILITIES \
-	-DCAPABILITIES_NATIVE \
 	-DMONOLITHIC \
 	-DUSE_IKEV1 \
 	-DUSE_IKEV2 \
@@ -86,10 +103,28 @@ strongswan_CFLAGS := \
 	-DDEV_RANDOM=\"/dev/random\" \
 	-DDEV_URANDOM=\"/dev/urandom\"
 
+ifeq ($(strongswan_BUILD_VoWiFi),)
+strongswan_CFLAGS += \
+	-DCAPABILITIES \
+	-DCAPABILITIES_NATIVE \
+
+endif
 # only for Android 2.0+
 strongswan_CFLAGS += \
-	-DHAVE_IN6ADDR_ANY
+	-DHAVE_IN6ADDR_ANY \
+	-DHAVE_SIGWAITINFO
 
+ifneq ($(strongswan_BUILD_USE_BORINGSSL),)
+strongswan_CFLAGS += \
+	-DOPENSSL_NO_CHACHA
+endif
+
+ifneq ($(strongswan_BUILD_VoWiFi),)
+strongswan_BUILD := \
+	charon \
+	libcharon \
+	libstrongswan
+else
 strongswan_BUILD := \
 	charon \
 	libcharon \
@@ -98,6 +133,17 @@ strongswan_BUILD := \
 	libtnccs \
 	libimcv \
 	libtpmtss
+endif
+
+ifneq ($(strongswan_BUILD_VoWiFi),)
+strongswan_CFLAGS += \
+	-DVOWIFI_CFG -DVOWIFI_USE_TIMER -DVOWIFI_PMTU_DISCOVERY -DVOWIFI_STRONGSWAN_5_8_2
+endif
+
+ifneq ($(strongswan_BUILD_USE_BORINGSSL),)
+strongswan_CFLAGS += \
+	-DVOWIFI_BORINGSSL
+endif
 
 ifneq ($(strongswan_BUILD_STARTER),)
 strongswan_BUILD += \

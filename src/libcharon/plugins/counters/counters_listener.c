@@ -156,6 +156,12 @@ METHOD(listener_t, alert, bool,
 {
 	counter_type_t type;
 
+#ifdef VOWIFI_CFG
+	if (ike_sa != NULL)
+	{
+		set_alert(ike_sa, alert, args);
+	}
+#endif
 	switch (alert)
 	{
 		case ALERT_INVALID_IKE_SPI:

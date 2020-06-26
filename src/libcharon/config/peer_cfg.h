@@ -385,6 +385,68 @@ struct peer_cfg_t {
 	 * destroys the peer_cfg when it reaches zero.
 	 */
 	void (*destroy) (peer_cfg_t *this);
+
+#ifdef VOWIFI_CFG
+	/**
+	*  Set keepalive_interval value (Seconds)
+	*/
+	void (*set_keepalive_interval)(peer_cfg_t *this, int interval);
+
+	/**
+	* get keepalive_interval value (Seconds)
+	*/
+	int (*get_keepalive_interval)(peer_cfg_t *this);
+
+	/**
+	* Use original TSi
+	*
+	* required for some operators send not narrowed TSi
+	* but original we used to establish connection
+	*/
+	void (*set_use_original_ts)(peer_cfg_t *this, int value);
+
+	int (*use_original_ts)(peer_cfg_t *this);
+
+	/**
+	* Set operator type
+	*/
+	void (*set_operator)(peer_cfg_t *this, int op);
+
+	/**
+	* Get operator type
+	*/
+	int (*get_operator)(peer_cfg_t *this);
+
+	/**
+	* Set handover flag
+	*/
+	void (*set_handover)(peer_cfg_t *this, int status);
+
+	/**
+	* Get handover flag
+	*/
+	int (*is_handover)(peer_cfg_t *this);
+
+	/**
+	* Set interface name
+	*/
+	void (*set_interface)(peer_cfg_t *this, char* name);
+
+	/**
+	* Get interface name
+	*/
+	char* (*get_interface)(peer_cfg_t *this);
+
+	/**
+	* Set rekey preferred flag
+	*/
+	void (*set_do_rekey_on_roam)(peer_cfg_t *this, int status);
+
+	/**
+	* Get rekey preferred flag
+	*/
+	int (*is_rekey_preferred)(peer_cfg_t *this);
+#endif
 };
 
 /**

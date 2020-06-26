@@ -29,6 +29,9 @@
 #include <threading/thread_value.h>
 #include <collections/linked_list.h>
 
+#ifdef VOWIFI_CFG
+#include <cutils/properties.h>
+#endif
 typedef struct private_processor_t private_processor_t;
 
 /**
@@ -443,6 +446,19 @@ METHOD(processor_t, set_threads, void,
 		worker_thread_t *worker;
 		int i;
 
+#ifdef VOWIFI_CFG
+                char *key="vendor.charon.status", value[PROPERTY_VALUE_MAX];
+                int set=1;
+                snprintf(value, sizeof(value), "%d", set);
+                if (property_set(key, value) != 0)
+                {
+                        DBG1(DBG_JOB, "Failed to set property value.\n");
+                }
+                else
+                {
+                        DBG1(DBG_JOB, "Successfully set %s property value.\n", key);
+                }
+#endif
 		this->desired_threads = count;
 		DBG1(DBG_JOB, "spawning %d worker threads", count - this->total_threads);
 		for (i = this->total_threads; i < count; i++)

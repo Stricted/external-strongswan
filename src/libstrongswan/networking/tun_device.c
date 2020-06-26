@@ -97,6 +97,12 @@ struct private_tun_device_t {
 	 */
 	int mtu;
 
+#ifdef VOWIFI_CFG
+	/**
+	 * Associated addresses
+	 */
+	linked_list_t* addresses;
+#else
 	/**
 	 * Associated address
 	 */
@@ -106,6 +112,7 @@ struct private_tun_device_t {
 	 * Netmask for address
 	 */
 	uint8_t netmask;
+#endif
 };
 
 /**
@@ -179,6 +186,7 @@ static bool set_address_impl(private_tun_device_t *this, host_t *addr,
 /**
  * Set the address using the classic SIOCSIFADDR etc. commands on other systems.
  */
+#ifndef VOWIFI_CFG
 static bool set_address_impl(private_tun_device_t *this, host_t *addr,
 							 uint8_t netmask)
 {
@@ -223,12 +231,16 @@ static bool set_address_impl(private_tun_device_t *this, host_t *addr,
 	}
 	return TRUE;
 }
-
+#endif /* VOWIFI_CFG */
 #endif /* __FreeBSD__ */
 
 METHOD(tun_device_t, set_address, bool,
 	private_tun_device_t *this, host_t *addr, uint8_t netmask)
 {
+#ifdef VOWIFI_CFG
+	host_t* new_address = addr->clone(addr);
+	this->addresses->insert_last(this->addresses, new_address);
+#else
 	if (!set_address_impl(this, addr, netmask))
 	{
 		return FALSE;
@@ -236,9 +248,11 @@ METHOD(tun_device_t, set_address, bool,
 	DESTROY_IF(this->address);
 	this->address = addr->clone(addr);
 	this->netmask = netmask;
+#endif
 	return TRUE;
 }
 
+#ifndef VOWIFI_CFG
 METHOD(tun_device_t, get_address, host_t*,
 	private_tun_device_t *this, uint8_t *netmask)
 {
@@ -248,6 +262,13 @@ METHOD(tun_device_t, get_address, host_t*,
 	}
 	return this->address;
 }
+#else
+METHOD(tun_device_t, create_addresses_enumerator, enumerator_t*,
+	private_tun_device_t *this)
+{
+	return this->addresses->create_enumerator(this->addresses);
+}
+#endif
 
 METHOD(tun_device_t, up, bool,
 	private_tun_device_t *this)
@@ -404,7 +425,17 @@ METHOD(tun_device_t, destroy, void,
 	{
 		close(this->sock);
 	}
+#ifndef VOWIFI_CFG
 	DESTROY_IF(this->address);
+#else
+	host_t *address;
+	enumerator_t *enumerator = this->addresses->create_enumerator(this->addresses);
+	while (enumerator->enumerate(enumerator, &address))
+	{
+		this->addresses->remove_at(this->addresses, enumerator);
+		address->destroy(address);
+	}
+#endif
 	free(this);
 }
 
@@ -468,7 +499,11 @@ static bool init_tun(private_tun_device_t *this, const char *name_tmpl)
 	strncpy(this->if_name, name_tmpl ?: "tun%d", IFNAMSIZ);
 	this->if_name[IFNAMSIZ-1] = '\0';
 
+#ifdef VOWIFI_CFG
+	this->tunfd = open("/dev/tun", O_RDWR);
+#else
 	this->tunfd = open("/dev/net/tun", O_RDWR);
+#endif
 	if (this->tunfd < 0)
 	{
 		DBG1(DBG_LIB, "failed to open /dev/net/tun: %s", strerror(errno));
@@ -553,7 +588,11 @@ tun_device_t *tun_device_create(const char *name_tmpl)
 			.get_name = _get_name,
 			.get_fd = _get_fd,
 			.set_address = _set_address,
+#ifndef VOWIFI_CFG
 			.get_address = _get_address,
+#else
+			.create_addresses_enumerator = _create_addresses_enumerator,
+#endif
 			.up = _up,
 			.destroy = _destroy,
 		},
@@ -566,8 +605,10 @@ tun_device_t *tun_device_create(const char *name_tmpl)
 		free(this);
 		return NULL;
 	}
+#ifdef VOWIFI_CFG
+	this->addresses = linked_list_create();
+#endif
 	DBG1(DBG_LIB, "created TUN device: %s", this->if_name);
-
 	this->sock = socket(AF_INET, SOCK_DGRAM, 0);
 	if (this->sock < 0)
 	{

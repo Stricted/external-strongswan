@@ -103,10 +103,17 @@ METHOD(simaka_manager_t, card_get_triplet, bool,
 	return FALSE;
 }
 
+#ifndef VOWIFI_CFG
 METHOD(simaka_manager_t, card_get_quintuplet, status_t,
 	private_simaka_manager_t *this, identification_t *id, char rand[AKA_RAND_LEN],
 	char autn[AKA_AUTN_LEN], char ck[AKA_CK_LEN], char ik[AKA_IK_LEN],
 	char res[AKA_RES_MAX], int *res_len)
+#else
+METHOD(simaka_manager_t, card_get_quintuplet, status_t,
+	private_simaka_manager_t *this, identification_t *id, char rand[AKA_RAND_LEN],
+	char autn[AKA_AUTN_LEN], char ck[AKA_CK_LEN], char ik[AKA_IK_LEN],
+	char res[AKA_RES_MAX], int *res_len, char* sa_name)
+#endif
 {
 	enumerator_t *enumerator;
 	simaka_card_t *card;
@@ -117,6 +124,11 @@ METHOD(simaka_manager_t, card_get_quintuplet, status_t,
 	enumerator = this->cards->create_enumerator(this->cards);
 	while (enumerator->enumerate(enumerator, &card))
 	{
+#ifdef VOWIFI_CFG
+		if (card->set_sa_name) {
+			card->set_sa_name(card, sa_name);
+		}
+#endif
 		status = card->get_quintuplet(card, id, rand, autn, ck, ik, res, res_len);
 		switch (status)
 		{	/* try next on error, but not on INVALID_STATE */

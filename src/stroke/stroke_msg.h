@@ -31,6 +31,14 @@
  */
 #define STROKE_BUF_LEN_INC     1024
 
+#ifdef VOWIFI_CFG
+typedef enum {
+	OPERATOR_TYPE_DEFAULT = 0,
+	OPERATOR_TYPE_TMO_ATT,
+	OPERATOR_TYPE_VZW,
+} operator_type_t;
+#endif
+
 typedef enum list_flag_t list_flag_t;
 
 /**
@@ -39,7 +47,7 @@ typedef enum list_flag_t list_flag_t;
  */
 enum list_flag_t {
 	/** don't list anything */
-	LIST_NONE =			0x0000,
+	LIST_NONE =		0x0000,
 	/** list all raw public keys */
 	LIST_PUBKEYS =		0x0001,
 	/** list all host/user certs */
@@ -57,15 +65,15 @@ enum list_flag_t {
 	/** list all ca information records */
 	LIST_CAINFOS =		0x0080,
 	/** list all crls */
-	LIST_CRLS =			0x0100,
+	LIST_CRLS =		0x0100,
 	/** list all ocsp cache entries */
-	LIST_OCSP =			0x0200,
+	LIST_OCSP =		0x0200,
 	/** list all supported algorithms */
-	LIST_ALGS =			0x0400,
+	LIST_ALGS =		0x0400,
 	/** list plugin information */
 	LIST_PLUGINS =		0x0800,
 	/** all list options */
-	LIST_ALL =			0x0FFF,
+	LIST_ALL =		0x0FFF,
 };
 
 typedef enum reread_flag_t reread_flag_t;
@@ -109,7 +117,7 @@ enum purge_flag_t {
 	/** purge X509 cache entries */
 	PURGE_CERTS =		0x0004,
 	/** purge IKE_SAs without a CHILD_SA */
-	PURGE_IKE =			0x0008,
+	PURGE_IKE =		0x0008,
 };
 
 typedef enum export_flag_t export_flag_t;
@@ -227,6 +235,12 @@ struct stroke_msg_t {
 		STR_USER_CREDS,
 		/* print/reset counters */
 		STR_COUNTERS,
+#ifdef VOWIFI_CFG
+        	/* ADD route */
+                STR_ADD_ROUTE,
+        	/* DELETE route */
+                STR_DEL_ROUTE,
+#endif
 		/* more to come */
 	} type;
 
@@ -303,6 +317,17 @@ struct stroke_msg_t {
 			stroke_end_t me, other;
 			uint32_t replay_window;
 			bool sha256_96;
+#ifdef VOWIFI_CFG
+			char* interface;
+			operator_type_t opr_type;
+			char *pcscf;
+			char *imei;
+			int keepalive_interval;
+
+#define OPT_USE_ORIGINAL_TS	0x00000001
+#define OPT_DO_REKEY_ON_ROAM	0x00000002
+			int options;
+#endif
 		} add_conn;
 
 		/* data for STR_ADD_CA */
@@ -368,7 +393,19 @@ struct stroke_msg_t {
 			int reset;
 			char *name;
 		} counters;
+
+#ifdef VOWIFI_CFG
+        	/* data for STR_ADD_ROUTE, STR_DEL_ROUTE */
+        	struct {
+            		char *src;
+            		char *dst;
+            		char *interface;
+        	} add_route, del_route;
+#endif
 	};
+#ifdef VOWIFI_CFG
+	FILE *out;
+#endif
 	/* length of the string buffer */
 	uint16_t buflen;
 	/* string buffer */

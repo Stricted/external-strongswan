@@ -69,6 +69,9 @@
 static const struct in6_addr in6addr_any = IN6ADDR_ANY_INIT;
 #endif
 
+#ifdef __UAPI_DEF_IN6_PKTINFO
+#define HAVE_IN6_PKTINFO
+#endif
 typedef struct private_socket_default_socket_t private_socket_default_socket_t;
 
 /**

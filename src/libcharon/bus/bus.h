@@ -157,6 +157,10 @@ enum alert_t {
 	ALERT_CERT_EXCEEDED_PATH_LEN,
 	/** Certificate rejected; other policy violation, certificate_t */
 	ALERT_CERT_POLICY_VIOLATION,
+#ifdef VOWIFI_CFG
+	/** IKE AUTH Notify with NETWORK_FAILURE type*/
+	ALERT_NETWORK_FAILURE,
+#endif
 };
 
 /**

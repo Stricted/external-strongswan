@@ -55,6 +55,10 @@
 #define FIPS_MODE 0
 #endif
 
+#ifdef OPENSSL_IS_BORINGSSL
+#define OPENSSL_INIT_ENGINE_ALL_BUILTIN 0
+#endif
+
 typedef struct private_openssl_plugin_t private_openssl_plugin_t;
 
 /**

@@ -19,6 +19,9 @@
 #include <daemon.h>
 #include <encoding/payloads/delete_payload.h>
 #include <sa/ikev2/tasks/ike_rekey.h>
+#ifdef VOWIFI_CFG
+#include <charon_comm_interface.h>
+#endif
 
 typedef struct private_ike_delete_t private_ike_delete_t;
 
@@ -46,6 +49,12 @@ struct private_ike_delete_t {
 	 * are we deleting a rekeyed SA?
 	 */
 	bool rekeyed;
+#ifdef VOWIFI_CFG
+	/**
+	 * Whether DELETE is received at time of INITIATE ongoing
+	 */
+	bool ike_connecting;
+#endif
 };
 
 METHOD(task_t, build_i, status_t,
@@ -161,6 +170,12 @@ METHOD(task_t, process_r, status_t,
 		case IKE_REKEYED:
 			this->rekeyed = TRUE;
 			break;
+#ifdef VOWIFI_CFG
+		case IKE_CONNECTING:
+			DBG0(DBG_IKE, "DELETE received for IKE_SA %s in IKE_CONNECTING state", this->ike_sa->get_name(this->ike_sa));
+			this->ike_connecting = TRUE;
+			break;
+#endif
 		default:
 			break;
 	}
@@ -235,6 +250,29 @@ METHOD(task_t, migrate, void,
 METHOD(task_t, destroy, void,
 	private_ike_delete_t *this)
 {
+#ifdef VOWIFI_CFG
+        DBG0(DBG_IKE,"this->initiator: [%d], this->ike_connecting: [%d]\n", this->initiator, this->ike_connecting);
+        if (this->ike_sa->has_condition(this->ike_sa, COND_REAUTHENTICATING))
+        {
+                DBG1(DBG_IKE,"IKE is getting Reauthenticated. Not sending intimation to JNI \n");
+        }
+        else if (this->rekeyed == TRUE)
+        {
+                DBG1(DBG_IKE,"IKE is getting Rekeyed. Not sending intimation to JNI\n");
+        }
+        else
+        {
+                if ( (this->ike_sa->is_terminated_from_service(this->ike_sa) == 0) && (this->ike_connecting  == FALSE))
+		{
+			DBG1(DBG_IKE,"Sending Delete intimation to JNI\n");
+			charon_send_terminated_indication(this->ike_sa->get_name(this->ike_sa));
+		}
+		else
+		{
+			DBG1(DBG_IKE,"Delete initiated by JNI.\n");
+		}
+         }
+#endif
 	free(this);
 }
 

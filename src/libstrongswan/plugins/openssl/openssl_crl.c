@@ -62,6 +62,10 @@ static inline void X509_CRL_get0_signature(const X509_CRL *crl, ASN1_BIT_STRING 
 #define X509_CRL_get0_nextUpdate(c) X509_CRL_get_nextUpdate(c)
 #endif
 
+#ifdef OPENSSL_IS_BORINGSSL
+#define X509_CRL_get0_extensions(c) ({ (c)->crl->extensions; })
+#endif
+
 typedef struct private_openssl_crl_t private_openssl_crl_t;
 
 /**
