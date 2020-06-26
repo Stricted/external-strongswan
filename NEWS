@@ -1,4 +1,4 @@
-strongswan-5.8.2
+strongswan-5.8.2 
 ----------------
 
 - Identity-based CA constraints are supported via vici/swanctl.conf. They

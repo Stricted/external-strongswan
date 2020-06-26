@@ -65,6 +65,14 @@
 #include <processing/jobs/initiate_mediation_job.h>
 #endif
 
+#ifdef VOWIFI_CFG
+#include <pthread.h>
+#include <networking/tun_device.h>
+#endif
+#ifdef VOWIFI_PMTU_DISCOVERY
+#include <linux/errqueue.h>
+#endif
+
 ENUM(ike_sa_state_names, IKE_CREATED, IKE_DESTROYING,
 	"CREATED",
 	"CONNECTING",
@@ -282,6 +290,35 @@ struct private_ike_sa_t {
 	 */
 	size_t fragment_size;
 
+#ifdef VOWIFI_CFG
+	/** Termination flag */
+	int terminated_from_service;
+
+	/** IP install thread */
+	pthread_t vip_tid;
+	bool vip_thread_started;
+
+	/** TUN device */
+	tun_device_t *tun;
+
+	/** MTU */
+	int mtu;
+#endif
+
+#ifdef VOWIFI_USE_TIMER
+	/** Keep-alive timer */
+	timer_t keepalive_timer_id;
+
+	/** DPD timer */
+	timer_t dpd_timer_id;
+#endif
+#ifdef VOWIFI_PMTU_DISCOVERY
+	/** PMTU socket */
+	int pmtu_sock;
+#endif
+
+
+
 	/**
 	 * Whether to follow IKEv2 redirects
 	 */
@@ -349,6 +386,14 @@ static time_t get_use_time(private_ike_sa_t* this, bool inbound)
 	return use_time;
 }
 
+#ifdef VOWIFI_USE_TIMER
+/* make wrapper for rekeying/reauth hard expiration time */
+static int get_over_time(private_ike_sa_t *this)
+{
+	return (this->peer_cfg->get_over_time(this->peer_cfg) +
+		max(this->peer_cfg->get_dpd(this->peer_cfg), this->keepalive_interval));
+}
+#endif
 METHOD(ike_sa_t, get_unique_id, uint32_t,
 	private_ike_sa_t *this)
 {
@@ -626,6 +671,59 @@ METHOD(ike_sa_t, set_message_id, void,
 	}
 }
 
+#ifdef VOWIFI_USE_TIMER
+/* check if timer was started */
+static int is_timer_started(timer_t id)
+{
+	struct itimerspec value;
+	if (timer_gettime(id, &value) < 0)
+	{
+		DBG1(DBG_IKE, "Failed to get timer value: %s", strerror(errno));
+		return 0;
+	}
+	return (value.it_value.tv_sec > 0);
+}
+
+/* helpers */
+static void do_stop_timer(timer_t id)
+{
+	if (is_timer_started(id))
+	{
+		struct itimerspec value = {{0, 0}, {0, 0}};
+		if (timer_settime(id, 0, &value, NULL) < 0)
+		{
+			DBG1(DBG_IKE, "Failed to stop timer: %s", strerror(errno));
+		}
+	}
+}
+
+static int do_start_timer(timer_t id, int sec)
+{
+	struct itimerspec value;
+	/* one shot */
+	value.it_interval.tv_sec = 0;
+	value.it_interval.tv_nsec = 0;
+	value.it_value.tv_sec = sec;
+	value.it_value.tv_nsec = 0;
+	return timer_settime(id, 0, &value, NULL);
+}
+
+/* start keep-alive timer */
+static void start_keepalive_timer(private_ike_sa_t *this, int sec)
+{
+	if (this->keepalive_timer_id)
+	{
+		if (do_start_timer(this->keepalive_timer_id, sec) < 0) {
+			DBG1(DBG_IKE, "Failed to start keep-alive timer: %s", strerror(errno));
+		}
+		else
+		{
+			DBG1(DBG_IKE, "Keep-alive timer started for %d seconds", sec);
+		}
+	}
+}
+#endif
+
 METHOD(ike_sa_t, get_message_id, uint32_t,
 	private_ike_sa_t *this, bool initiate)
 {
@@ -635,6 +733,9 @@ METHOD(ike_sa_t, get_message_id, uint32_t,
 METHOD(ike_sa_t, send_keepalive, void,
 	private_ike_sa_t *this, bool scheduled)
 {
+#ifndef VOWIFI_USE_TIMER
+	send_keepalive_job_t *job;
+#endif
 	time_t last_out, now, diff;
 
 	if (scheduled)
@@ -667,16 +768,20 @@ METHOD(ike_sa_t, send_keepalive, void,
 		data.ptr[0] = 0xFF;
 		data.len = 1;
 		packet->set_data(packet, data);
-		DBG1(DBG_IKE, "sending keep alive to %#H", this->other_host);
+		DBG1(DBG_IKE, "sending keep alive to %#H, (interval: %d)", this->other_host, this->keepalive_interval);
 		charon->sender->send_no_marker(charon->sender, packet);
 		diff = 0;
 	}
+#ifndef VOWIFI_USE_TIMER
 	if (!this->keepalive_job)
 	{
 		this->keepalive_job = send_keepalive_job_create(this->ike_sa_id);
 		lib->scheduler->schedule_job(lib->scheduler, (job_t*)this->keepalive_job,
 									 this->keepalive_interval - diff);
 	}
+#else
+	start_keepalive_timer(this, this->keepalive_interval - diff);
+#endif
 }
 
 METHOD(ike_sa_t, get_ike_cfg, ike_cfg_t*,
@@ -711,6 +816,20 @@ METHOD(ike_sa_t, has_condition, bool,
 	return (this->conditions & condition) != FALSE;
 }
 
+#ifdef VOWIFI_USE_TIMER
+void updating_keepalive_interval(private_ike_sa_t *this)
+{   int new_keepalive_interval = 0;
+    if (this->peer_cfg){
+        new_keepalive_interval = this->peer_cfg->get_keepalive_interval(this->peer_cfg);
+        if(this->keepalive_interval != new_keepalive_interval) {
+            this->keepalive_interval = new_keepalive_interval;
+            DBG1(DBG_IKE, "new keepalive_interval(%d)", this->keepalive_interval);
+        }
+    }
+    return;
+}
+#endif
+
 METHOD(ike_sa_t, set_condition, void,
 	private_ike_sa_t *this, ike_condition_t condition, bool enable)
 {
@@ -724,6 +843,9 @@ METHOD(ike_sa_t, set_condition, void,
 				case COND_NAT_HERE:
 					DBG1(DBG_IKE, "local host is behind NAT, sending keep alives");
 					this->conditions |= COND_NAT_ANY;
+#ifdef VOWIFI_USE_TIMER
+					updating_keepalive_interval(this);
+#endif
 					send_keepalive(this, FALSE);
 					break;
 				case COND_NAT_THERE:
@@ -764,10 +886,28 @@ METHOD(ike_sa_t, set_condition, void,
 	}
 }
 
+#ifdef VOWIFI_USE_TIMER
+/* start DPD timer */
+static void start_dpd_timer(private_ike_sa_t *this, int sec)
+{
+	if (this->dpd_timer_id)
+	{
+		if (do_start_timer(this->dpd_timer_id, sec) < 0) {
+			DBG1(DBG_IKE, "Failed to start DPD timer: %s", strerror(errno));
+		}
+		else
+		{
+			DBG1(DBG_IKE, "DPD timer started for %d seconds", sec);
+		}
+	}
+}
+#endif
 METHOD(ike_sa_t, send_dpd, status_t,
 	private_ike_sa_t *this)
 {
+#ifndef VOWIFI_USE_TIMER
 	job_t *job;
+#endif
 	time_t diff, delay;
 	bool task_queued = FALSE;
 
@@ -804,8 +944,12 @@ METHOD(ike_sa_t, send_dpd, status_t,
 	/* recheck in "interval" seconds */
 	if (delay)
 	{
+#ifndef VOWIFI_USE_TIMER
 		job = (job_t*)send_dpd_job_create(this->ike_sa_id);
 		lib->scheduler->schedule_job(lib->scheduler, job, delay - diff);
+#else
+		start_dpd_timer(this, delay - diff);
+#endif
 	}
 	if (task_queued)
 	{
@@ -863,7 +1007,11 @@ METHOD(ike_sa_t, set_state, void,
 					lib->scheduler->schedule_job(lib->scheduler, job, t);
 					DBG1(DBG_IKE, "scheduling reauthentication in %ds", t);
 				}
+#ifndef VOWIFI_USE_TIMER
 				t = this->peer_cfg->get_over_time(this->peer_cfg);
+#else
+				t = get_over_time(this);
+#endif
 				if (this->stats[STAT_REKEY] || this->stats[STAT_REAUTH])
 				{
 					if (this->stats[STAT_REAUTH] == 0)
@@ -958,14 +1106,286 @@ METHOD(ike_sa_t, get_keymat, keymat_t*,
 {
 	return this->keymat;
 }
+#ifdef VOWIFI_PMTU_DISCOVERY
+
+#define PMTU_DATA_BUFFER_SIZE		2048
+#define PMTU_CONTROL_BUFFER_SIZE	1024
+#define PMTUv4_MAX_PACKET_SIZE		1472
+
+static unsigned char pmtu_data_buffer[PMTU_DATA_BUFFER_SIZE] = {0};
+static unsigned char pmtu_control_buffer[PMTU_CONTROL_BUFFER_SIZE] = {0};
+
+static int open_pmtu_socket(private_ike_sa_t *this)
+{
+	if (this->pmtu_sock > 0)
+	{
+		DBG1(DBG_IKE, "PMTU socket was already opened");
+		return this->pmtu_sock;
+	}
+	if (this->my_host->get_family(this->my_host) == AF_INET)
+	{
+		struct sockaddr_in bind_addr;
+		chunk_t local_addr = this->my_host->get_address(this->my_host);
+
+		/* open socket */
+		int sock = socket(AF_INET, SOCK_DGRAM, 0);
+		if (sock < 0)
+		{
+			DBG1(DBG_IKE, "Failed to open PMTU socket: %s", strerror(errno));
+			return sock;
+		}
+		int opt_val = 1;
+		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void*)&opt_val, sizeof(opt_val)) < 0)
+		{
+			DBG1(DBG_IKE, "Failed to set SO_REUSEADDR to PMTU socket: %s", strerror(errno));
+			close(sock);
+			return (-1);
+		}
+		/* bind */
+		bind_addr.sin_family = AF_INET;
+		bind_addr.sin_port = 0; /* any port */
+		memcpy(&bind_addr.sin_addr.s_addr, local_addr.ptr, local_addr.len);
+		if (bind(sock, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0)
+		{
+			DBG1(DBG_IKE, "Failed to bind PMTU socket: %s", strerror(errno));
+			close(sock);
+			return (-1);
+		}
+		/* enable PMTU discovery, set DF bit */
+		opt_val = IP_PMTUDISC_DO;
+		if (setsockopt(sock, IPPROTO_IP, IP_MTU_DISCOVER, &opt_val, sizeof(opt_val)) < 0)
+		{
+			DBG1(DBG_IKE, "Failed to enable PMTU discovery: %s", strerror(errno));
+			close(sock);
+			return (-1);
+		}
+		/* enable extended error report */
+		opt_val = 1;
+		if (setsockopt(sock, IPPROTO_IP, IP_RECVERR, (char*)&opt_val, sizeof(opt_val)) < 0)
+		{
+			DBG1(DBG_IKE, "Failed to enable error report: %s", strerror(errno));
+			close(sock);
+			return (-1);
+		}
+		return sock;
+	}
+	else
+	{
+		DBG1(DBG_IKE, "IPv6 is not supported now");
+	}
+	return (-1);
+}
+
+static void close_pmtu_socket(private_ike_sa_t *this)
+{
+	if (this->pmtu_sock > 0)
+	{
+		close(this->pmtu_sock);
+		this->pmtu_sock = -1;
+	}
+}
+
+static void pmtu_discovery_stage1(private_ike_sa_t *this)
+{
+	/* execute once */
+	if (this->pmtu_sock < 0)
+	{
+		int err;
+
+		this->pmtu_sock = open_pmtu_socket(this);
+		if (this->pmtu_sock < 0)
+		{
+			return;
+		}
+		DBG1(DBG_IKE, "PMTU discovery, stage 1. Send %d bytes", PMTUv4_MAX_PACKET_SIZE);
+
+		/* send big packet */
+		err = sendto(this->pmtu_sock, pmtu_data_buffer, PMTUv4_MAX_PACKET_SIZE, 0,
+			this->other_host->get_sockaddr(this->other_host),
+			*(this->other_host->get_sockaddr_len(this->other_host)));
+		if (err < 0)
+		{
+			err = errno;
+			DBG1(DBG_IKE, "Failed to send: %s", strerror(err));
+
+			/* some errors processing required */
+			switch (err)
+			{
+				case ENETUNREACH:
+				case ENETDOWN:
+					close_pmtu_socket(this);
+					break;
+				default:;
+			}
+		}
+	}
+}
+
+static int pmtu_discovery_stage2(private_ike_sa_t *this)
+{
+	int mtu = 0;
+
+	/* socket should be opened already but if not, open */
+	if (this->pmtu_sock < 0)
+	{
+		DBG1(DBG_IKE, "PMTU socket was not opened");
+
+		this->pmtu_sock = open_pmtu_socket(this);
+		if (this->pmtu_sock < 0)
+		{
+			return mtu;
+		}
+	}
+	if (this->pmtu_sock > 0)
+	{
+		DBG1(DBG_IKE, "PMTU discovery, stage 2. Send %d bytes", PMTUv4_MAX_PACKET_SIZE);
+
+		/* send big packet */
+		memset(pmtu_control_buffer, 0, PMTU_CONTROL_BUFFER_SIZE);
+		if (sendto(this->pmtu_sock, pmtu_data_buffer, PMTUv4_MAX_PACKET_SIZE, 0,
+			this->other_host->get_sockaddr(this->other_host),
+			*(this->other_host->get_sockaddr_len(this->other_host))) < 0)
+		{
+			struct iovec iov;
+			struct msghdr msg;
+			struct cmsghdr *cmsg;
+			struct sockaddr_in remote;
+
+			iov.iov_base = pmtu_data_buffer;
+			iov.iov_len = PMTU_DATA_BUFFER_SIZE;
+			msg.msg_name = (void*)&remote;
+			msg.msg_namelen = sizeof(remote);
+			msg.msg_iov = &iov;
+			msg.msg_iovlen = 1;
+			msg.msg_flags = 0;
+			msg.msg_control = pmtu_control_buffer;
+			msg.msg_controllen = PMTU_CONTROL_BUFFER_SIZE;
+			if (recvmsg(this->pmtu_sock, &msg, MSG_ERRQUEUE) < 0)
+			{
+				DBG1(DBG_IKE, "Failed to read error report: %s", strerror(errno));
+				return mtu;
+			}
+			for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg))
+			{
+				if (cmsg->cmsg_level == SOL_IP)
+				{
+					if (cmsg->cmsg_type == IP_RECVERR)
+					{
+						struct sock_extended_err *err = (struct sock_extended_err*)CMSG_DATA(cmsg);
+						if (err)
+						{
+							if ((err->ee_origin == SO_EE_ORIGIN_ICMP) ||
+							    (err->ee_origin == SO_EE_ORIGIN_LOCAL))
+							{
+								if (err->ee_errno == EMSGSIZE)
+								{
+									mtu = err->ee_info;
+									DBG1(DBG_IKE, "Discovered link MTU is %d bytes", mtu);
+									/* substract IP and UDP headers */
+									mtu -= 28;
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			DBG1(DBG_IKE, "Send of %d bytes successful", PMTUv4_MAX_PACKET_SIZE);
+			mtu = PMTUv4_MAX_PACKET_SIZE;
+		}
+		if (mtu > 0)
+		{
+			/* substract ESP header */
+			mtu -= (4 + 4 + 1 + 1 + 16 + 32 + 16); /* seq_num + spi + pad_len + next_hdr + init_vec + auth_data + pad */
+		}
+	}
+	DBG1(DBG_IKE, "PMTU discovery, stage 2. MTU is %d bytes", mtu);
+	return mtu;
+}
+#endif
 
 METHOD(ike_sa_t, add_virtual_ip, void,
 	private_ike_sa_t *this, bool local, host_t *ip)
 {
 	if (local)
 	{
+#ifdef VOWIFI_CFG
+#define TUN_DEFAULT_MTU 1400
+#define TUN_MINIMUM_MTU 1280
+		host_t* address;
+		bool found = FALSE;
+
+		if (this->tun == NULL)
+		{
+			int mtu = 0;
+#ifdef VOWIFI_PMTU_DISCOVERY
+			mtu = pmtu_discovery_stage2(this);
+#endif
+			if (mtu == 0)
+			{
+				mtu = TUN_DEFAULT_MTU;
+			}
+			this->tun = tun_device_create("epdg%d");
+			if (!this->tun)
+			{
+				DBG1(DBG_IKE, "failed to create TUN device");
+				return;
+			}
+			this->mtu = mtu;
+			if (mtu < TUN_MINIMUM_MTU)
+			{
+				DBG1(DBG_IKE, "MTU size is less than minimum IPv6 MTU (%d), set minimum (%d)", mtu, TUN_MINIMUM_MTU);
+				mtu = TUN_MINIMUM_MTU;
+			}
+			if (!this->tun->set_mtu(this->tun, mtu))
+			{
+				DBG1(DBG_IKE, "failed to configure TUN device");
+				this->tun->destroy(this->tun);
+				this->tun = NULL;
+				return;
+			}
+			if (!this->tun->up(this->tun))
+			{
+				DBG1(DBG_IKE, "failed to up TUN device");
+				this->tun->destroy(this->tun);
+				this->tun = NULL;
+				return;
+			}
+		}
+		enumerator_t *enumerator = this->tun->create_addresses_enumerator(this->tun);
+		while (enumerator->enumerate(enumerator, &address))
+		{
+			if (address->equals(address, ip))
+			{
+				found = TRUE;
+			}
+		}
+		enumerator->destroy(enumerator);
+
+		if (!found)
+		{
+			if (charon->kernel->add_ip(charon->kernel, ip, -1, this->tun->get_name(this->tun)) != SUCCESS)
+			{
+				DBG1(DBG_IKE, "failed to set ip to TUN device");
+				this->tun->destroy(this->tun);
+				this->tun = NULL;
+				return;
+			}
+			array_insert_create(&this->my_vips, ARRAY_TAIL, ip->clone(ip));
+			this->tun->set_address(this->tun, ip, ip->get_family(ip) == AF_INET ? 32 : 128);
+			DBG1(DBG_IKE, "IP %H installed on %s", ip, this->tun->get_name(this->tun));
+		}
+		else
+		{
+			DBG1(DBG_IKE, "IP %H was already installed on %s", ip, this->tun->get_name(this->tun));
+		}
+#else
 		char *iface;
 
+		DBG1(DBG_IKE, " get_interface(my_host:%H)", this->my_host);
 		if (charon->kernel->get_interface(charon->kernel, this->my_host,
 										  &iface))
 		{
@@ -985,6 +1405,7 @@ METHOD(ike_sa_t, add_virtual_ip, void,
 		{
 			DBG1(DBG_IKE, "looking up interface for virtual IP %H failed", ip);
 		}
+#endif
 	}
 	else
 	{
@@ -1008,7 +1429,14 @@ METHOD(ike_sa_t, clear_virtual_ips, void,
 	{
 		if (local)
 		{
+#ifdef VOWIFI_CFG
+			if (this->tun) {
+				this->tun->destroy(this->tun);
+			}
+			this->tun = NULL;
+#else
 			charon->kernel->del_ip(charon->kernel, vip, -1, TRUE);
+#endif
 		}
 		vip->destroy(vip);
 	}
@@ -1083,6 +1511,22 @@ METHOD(ike_sa_t, float_ports, void,
 	}
 }
 
+#ifdef VOWIFI_CFG
+bool isSameIface(host_t *host_a, host_t *host_b)
+{
+	bool bResult = false;
+
+	char *iface_host_a, *iface_host_b;
+	charon->kernel->get_interface(charon->kernel, host_a, &iface_host_a);
+	charon->kernel->get_interface(charon->kernel, host_b, &iface_host_b);
+
+	if(strcmp(iface_host_a, iface_host_b) == 0) bResult = true;
+	else DBG1(DBG_IKE, "Different ifaces, host_a(%H, %s), host_b(%H, %s)",host_a, iface_host_a, host_b, iface_host_b);
+
+	return bResult;
+}
+#endif
+
 METHOD(ike_sa_t, update_hosts, void,
 	private_ike_sa_t *this, host_t *me, host_t *other, bool force)
 {
@@ -1101,6 +1545,9 @@ METHOD(ike_sa_t, update_hosts, void,
 	if (this->my_host->is_anyaddr(this->my_host) ||
 		this->other_host->is_anyaddr(this->other_host))
 	{
+#ifdef VOWIFI_CFG
+		if(isSameIface(me, this->my_host))
+#endif
 		set_my_host(this, me->clone(me));
 		set_other_host(this, other->clone(other));
 		update = TRUE;
@@ -1108,7 +1555,11 @@ METHOD(ike_sa_t, update_hosts, void,
 	else
 	{
 		/* update our address in any case */
-		if (force && !me->equals(me, this->my_host))
+		if (force && !me->equals(me, this->my_host)
+#ifdef VOWIFI_CFG
+		&& isSameIface(me, this->my_host)
+#endif
+		)
 		{
 			charon->bus->ike_update(charon->bus, &this->public, TRUE, me);
 			set_my_host(this, me->clone(me));
@@ -1506,6 +1957,13 @@ METHOD(ike_sa_t, initiate, status_t,
 
 		set_condition(this, COND_ORIGINAL_INITIATOR, TRUE);
 		this->task_manager->queue_ike(this->task_manager);
+#ifdef VOWIFI_PMTU_DISCOVERY
+		/* send PMTU message first */
+		if (!defer_initiate)
+		{
+			pmtu_discovery_stage1(this);
+		}
+#endif
 	}
 
 #ifdef ME
@@ -2454,8 +2912,11 @@ METHOD(ike_sa_t, set_auth_lifetime, status_t,
 {
 	uint32_t diff, hard, soft, now;
 	bool send_update;
-
+#ifndef VOWIFI_USE_TIMER
 	diff = this->peer_cfg->get_over_time(this->peer_cfg);
+#else
+	diff = get_over_time(this);
+#endif
 	now = time_monotonic(NULL);
 	hard = now + lifetime;
 	soft = hard - diff;
@@ -2515,6 +2976,36 @@ METHOD(ike_sa_t, set_auth_lifetime, status_t,
 	return SUCCESS;
 }
 
+#ifdef VOWIFI_CFG
+static bool is_address_on_interface(private_ike_sa_t *this, host_t *address)
+{
+	bool valid = TRUE;
+
+	if (this->peer_cfg)
+	{
+		char* ike_sa_iface = this->peer_cfg->get_interface(this->peer_cfg);
+		if (ike_sa_iface)
+		{
+			char *iface;
+
+			valid = FALSE;
+			if (charon->kernel->get_interface(charon->kernel, address, &iface))
+			{
+				if (iface)
+				{
+					DBG1(DBG_IKE, "PATH check: %H on %s, IKE SA on %s", address, iface, ike_sa_iface);
+					if(streq(iface, ike_sa_iface))
+					{
+						valid = TRUE;
+					}
+				}
+			}
+		}
+	}
+	return valid;
+}
+#endif
+
 /**
  * Check if the current combination of source and destination address is still
  * valid.
@@ -2533,7 +3024,11 @@ static bool is_current_path_valid(private_ike_sa_t *this)
 											  NULL);
 		if (src)
 		{
+#ifndef VOWIFI_CFG
 			valid = src->ip_equals(src, this->my_host);
+#else
+			valid = src->ip_equals(src, this->my_host) && is_address_on_interface(this, src);
+#endif
 			src->destroy(src);
 		}
 		if (!valid)
@@ -2548,7 +3043,14 @@ static bool is_current_path_valid(private_ike_sa_t *this)
 	{
 		if (src->ip_equals(src, this->my_host))
 		{
+#ifdef VOWIFI_CFG
+			if (is_address_on_interface(this, src))
+			{
+				valid = TRUE;
+			}
+#else
 			valid = TRUE;
+#endif
 		}
 		src->destroy(src);
 	}
@@ -2593,12 +3095,29 @@ static bool is_any_path_valid(private_ike_sa_t *this)
 		src = charon->kernel->get_source_addr(charon->kernel, addr, NULL);
 		if (src)
 		{
+#ifdef VOWIFI_CFG
+			if (is_address_on_interface(this, src))
+			{
+				/* hack resolve_hosts */
+				if (!this->local_host || !src->ip_equals(src, this->local_host))
+				{
+					DESTROY_IF(this->local_host);
+					this->local_host = src->clone(src);
+				}
+				break;
+			}
+		}
+		src = NULL;
+#else
 			break;
 		}
+#endif
 	}
 	enumerator->destroy(enumerator);
 	if (src)
 	{
+		DBG1(DBG_IKE, "%H found for a route to %H", src, addr);
+
 		valid = TRUE;
 		src->destroy(src);
 	}
@@ -2630,7 +3149,7 @@ METHOD(ike_sa_t, roam, status_t,
 		 * have to reestablish from scratch (reauth is not enough) */
 		return SUCCESS;
 	}
-
+#ifndef VOWIFI_CFG
 	/* ignore roam events if MOBIKE is not supported/enabled and the local
 	 * address is statically configured */
 	if (!supports_extension(this, EXT_MOBIKE) &&
@@ -2640,12 +3159,17 @@ METHOD(ike_sa_t, roam, status_t,
 			 this->my_host, this->other_host);
 		return SUCCESS;
 	}
-
+#endif
 	/* keep existing path if possible */
 	if (is_current_path_valid(this))
 	{
+#if VOWIFI_CFG
+		DBG1(DBG_IKE, "keeping connection path %H - %H",
+			 this->my_host, this->other_host);
+#else
 		DBG2(DBG_IKE, "keeping connection path %H - %H",
 			 this->my_host, this->other_host);
+#endif
 		set_condition(this, COND_STALE, FALSE);
 
 		if (supports_extension(this, EXT_MOBIKE) && address)
@@ -2662,10 +3186,18 @@ METHOD(ike_sa_t, roam, status_t,
 		DBG1(DBG_IKE, "no route found to reach %H, MOBIKE update deferred",
 			 this->other_host);
 		set_condition(this, COND_STALE, TRUE);
+#ifdef VOWIFI_PMTU_DISCOVERY
+		/* disconnected, close socket */
+		close_pmtu_socket(this);
+#endif
 		return SUCCESS;
 	}
 	set_condition(this, COND_STALE, FALSE);
 
+#ifdef VOWIFI_PMTU_DISCOVERY
+	/* reconnected, send PMTU */
+	pmtu_discovery_stage1(this);
+#endif
 	/* update addresses with mobike, if supported ... */
 	if (supports_extension(this, EXT_MOBIKE))
 	{
@@ -2689,9 +3221,21 @@ METHOD(ike_sa_t, roam, status_t,
 		set_condition(this, COND_STALE, TRUE);
 		return SUCCESS;
 	}
-	DBG1(DBG_IKE, "reauthenticating IKE_SA due to address change");
 	/* since our previous path is not valid anymore, try and find a new one */
 	resolve_hosts(this);
+
+#ifdef VOWIFI_CFG
+	if (this->peer_cfg)
+	{
+		if (this->peer_cfg->is_rekey_preferred(this->peer_cfg))
+		{
+			DBG1(DBG_IKE, "rekeying IKE_SA due to address change");
+			return rekey(this);
+		}
+	}
+#endif
+
+	DBG1(DBG_IKE, "reauthenticating IKE_SA due to address change");
 	return reauth(this);
 }
 
@@ -2832,6 +3376,10 @@ METHOD(ike_sa_t, inherit_post, void,
 	this->other_id = other->other_id->clone(other->other_id);
 	this->if_id_in = other->if_id_in;
 	this->if_id_out = other->if_id_out;
+#ifdef VOWIFI_CFG
+	this->tun = other->tun;
+	other->tun = NULL;
+#endif
 
 	/* apply assigned virtual IPs... */
 	while (array_remove(other->my_vips, ARRAY_HEAD, &vip))
@@ -2905,7 +3453,11 @@ METHOD(ike_sa_t, inherit_post, void,
 
 		this->stats[STAT_REAUTH] = other->stats[STAT_REAUTH];
 		reauth = this->stats[STAT_REAUTH] - now;
+#ifndef VOWIFI_USE_TIMER
 		delete = reauth + this->peer_cfg->get_over_time(this->peer_cfg);
+#else
+		delete = reauth + get_over_time(this);
+#endif
 		this->stats[STAT_DELETE] = this->stats[STAT_REAUTH] + delete;
 		DBG1(DBG_IKE, "rescheduling reauthentication in %ds after rekeying, "
 			 "lifetime reduced to %ds", reauth, delete);
@@ -2915,6 +3467,19 @@ METHOD(ike_sa_t, inherit_post, void,
 				(job_t*)delete_ike_sa_job_create(this->ike_sa_id, TRUE), delete);
 	}
 }
+
+#ifdef VOWIFI_CFG
+METHOD(ike_sa_t, wait_for_installed_vip, void,
+	private_ike_sa_t *this)
+{
+	if (this->vip_thread_started)
+	{
+		void* ret;
+		pthread_join(this->vip_tid, &ret);
+		this->vip_thread_started = FALSE;
+	}
+}
+#endif
 
 METHOD(ike_sa_t, destroy, void,
 	private_ike_sa_t *this)
@@ -2930,6 +3495,21 @@ METHOD(ike_sa_t, destroy, void,
 	{
 		this->task_manager->flush(this->task_manager);
 	}
+#ifdef VOWIFI_USE_TIMER
+	if (this->keepalive_timer_id)
+	{
+		do_stop_timer(this->keepalive_timer_id);
+		timer_delete(this->keepalive_timer_id);
+	}
+	if (this->dpd_timer_id)
+	{
+		do_stop_timer(this->dpd_timer_id);
+		timer_delete(this->dpd_timer_id);
+	}
+#endif
+#ifdef VOWIFI_PMTU_DISCOVERY
+	close_pmtu_socket(this);
+#endif
 
 	/* remove attributes first, as we pass the IKE_SA to the handler */
 	charon->bus->handle_vips(charon->bus, &this->public, FALSE);
@@ -2949,9 +3529,23 @@ METHOD(ike_sa_t, destroy, void,
 		charon->child_sa_manager->remove(charon->child_sa_manager, child_sa);
 		child_sa->destroy(child_sa);
 	}
+#ifdef VOWIFI_CFG
+	if (this->peer_cfg->is_handover(this->peer_cfg))
+	{
+		DBG1(DBG_IKE, "IKE Failure in Handover scenario. Waiting for ADD VIP thread to complete.\n");
+		wait_for_installed_vip(this);
+	}
+#endif
 	while (array_remove(this->my_vips, ARRAY_TAIL, &vip))
 	{
+#ifdef VOWIFI_CFG
+		if (this->tun) {
+			this->tun->destroy(this->tun);
+		}
+		this->tun = NULL;
+#else
 		charon->kernel->del_ip(charon->kernel, vip, -1, TRUE);
+#endif
 		vip->destroy(vip);
 	}
 	if (array_count(this->other_vips))
@@ -3014,6 +3608,180 @@ METHOD(ike_sa_t, destroy, void,
 	this->ike_sa_id->destroy(this->ike_sa_id);
 	free(this);
 }
+
+#ifdef VOWIFI_CFG
+METHOD(ike_sa_t, get_ip_configuration_attribute, char*,
+	private_ike_sa_t *this, configuration_attribute_type_t type, int cnt)
+{
+	attribute_entry_t entry;
+	int i, pos = 0, len = INET6_ADDRSTRLEN * cnt + 1 + cnt;
+
+	charon->bus->set_sa(charon->bus, &this->public);
+
+	/* remove attributes first, as we pass the IKE_SA to the handler */
+    	charon->bus->handle_vips(charon->bus, &this->public, FALSE);
+
+        char* mem = calloc(len, 1);
+	for (i = 0; i < array_count(this->attributes); i++)
+	{
+    		array_get(this->attributes, i, &entry);
+        	if (entry.handler && (entry.type == type))
+        	{
+			if (entry.data.len >= 16)
+			{
+                    		if ((len - pos) < INET6_ADDRSTRLEN)
+				{
+					pos++;
+					break;
+				}
+				inet_ntop(AF_INET6, entry.data.ptr, mem + pos, (len - pos));
+			}
+			else if (entry.data.len >= 4)
+			{
+				if ((len - pos) < INET_ADDRSTRLEN)
+				{
+					pos++;
+					break;
+				}
+				inet_ntop(AF_INET, entry.data.ptr, mem + pos, (len - pos));
+			}
+			strcat(mem, ",");
+			pos = strlen(mem);
+		}
+	}
+
+	if(pos == 0)
+	{
+		free(mem);
+		return NULL;
+	}
+	else
+	{
+		mem[pos - 1] = 0;
+	}
+	return mem;
+}
+
+METHOD(ike_sa_t, get_operator, int,
+	private_ike_sa_t *this)
+{
+	return this->peer_cfg->get_operator(this->peer_cfg);
+}
+
+METHOD(ike_sa_t, set_handover, void,
+	private_ike_sa_t *this, int status)
+{
+	this->peer_cfg->set_handover(this->peer_cfg, status);
+}
+
+METHOD(ike_sa_t, get_handover, int,
+	private_ike_sa_t *this)
+{
+	return this->peer_cfg->is_handover(this->peer_cfg);
+}
+
+METHOD(ike_sa_t, set_terminate, void,
+	private_ike_sa_t *this)
+{
+	this->terminated_from_service = 1;
+}
+
+METHOD(ike_sa_t, get_terminate, int,
+	private_ike_sa_t *this)
+{
+	return this->terminated_from_service;
+}
+
+/**
+ * This call installs virtual IP of interfaces during Handover scenario
+ * in parallel to exchange of IKE_AUTH messages to reduce handover time.
+ **/
+static void* add_ip_thread_cb(void* arg)
+{
+	peer_cfg_t *config;
+	enumerator_t *enumerator;
+	host_t *host;
+	private_ike_sa_t *this = (private_ike_sa_t*)arg;
+
+	DBG1(DBG_IKE,"Install VIPs in thread");
+
+	/* Enumerating to all valid virtual IPs */
+	config = get_peer_cfg(this);
+	enumerator = config->create_virtual_ip_enumerator(config);
+	while (enumerator->enumerate(enumerator, &host))
+	{
+		if (!host->is_anyaddr(host))
+		{
+			add_virtual_ip(this, TRUE, host);
+		}
+	}
+	enumerator->destroy(enumerator);
+	return NULL;
+}
+
+METHOD(ike_sa_t, install_vip, void,
+	private_ike_sa_t *this)
+{
+	int err = pthread_create(&this->vip_tid, NULL, &add_ip_thread_cb, (void*)this);
+	if (err == 0)
+	{
+		this->vip_thread_started = TRUE;
+	}
+	else
+	{
+		DBG1(DBG_IKE, "Thread Creation Failed : %s", strerror(errno));
+	}
+}
+
+METHOD(ike_sa_t, get_tun_name, char*,
+	private_ike_sa_t *this)
+{
+	if (this->tun) {
+		return this->tun->get_name(this->tun);
+	}
+	return NULL;
+}
+
+METHOD(ike_sa_t, get_mtu, int,
+	private_ike_sa_t *this)
+{
+	return this->mtu;
+}
+#endif
+
+#ifdef VOWIFI_USE_TIMER
+/* keep-alive handler, do the same as send_keepalive_job */
+static void keepalive_timer_callback(union sigval parameter)
+{
+	ike_sa_id_t *ike_sa_id = (ike_sa_id_t*)parameter.sival_ptr;
+
+	ike_sa_t *ike_sa = charon->ike_sa_manager->checkout(charon->ike_sa_manager, ike_sa_id);
+	if (ike_sa)
+	{
+		send_keepalive(ike_sa, FALSE);
+		charon->ike_sa_manager->checkin(charon->ike_sa_manager, ike_sa);
+	}
+}
+
+/* DPD handler, do the same as send_dpd_job */
+static void dpd_timer_callback(union sigval parameter)
+{
+	ike_sa_id_t *ike_sa_id = (ike_sa_id_t*)parameter.sival_ptr;
+
+	ike_sa_t *ike_sa = charon->ike_sa_manager->checkout(charon->ike_sa_manager, ike_sa_id);
+	if (ike_sa)
+	{
+		if (send_dpd(ike_sa) == DESTROY_ME)
+		{
+			charon->ike_sa_manager->checkin_and_destroy(charon->ike_sa_manager, ike_sa);
+		}
+		else
+		{
+			charon->ike_sa_manager->checkin(charon->ike_sa_manager, ike_sa);
+		}
+	}
+}
+#endif
 
 /*
  * Described in header.
@@ -3117,6 +3885,18 @@ ike_sa_t * ike_sa_create(ike_sa_id_t *ike_sa_id, bool initiator,
 			.queue_task = _queue_task,
 			.queue_task_delayed = _queue_task_delayed,
 			.adopt_child_tasks = _adopt_child_tasks,
+#ifdef VOWIFI_CFG
+			.get_operator = _get_operator,
+			.set_handover = _set_handover,
+			.is_handover = _get_handover,
+			.set_terminate = _set_terminate,
+			.is_terminated_from_service = _get_terminate,
+			.install_vip = _install_vip,
+			.wait_for_installed_vip = _wait_for_installed_vip,
+			.get_tun_name = _get_tun_name,
+			.get_mtu = _get_mtu,
+			.get_ip_configuration_attribute = _get_ip_configuration_attribute,
+#endif
 #ifdef ME
 			.act_as_mediation_server = _act_as_mediation_server,
 			.get_server_reflexive_host = _get_server_reflexive_host,
@@ -3165,7 +3945,43 @@ ike_sa_t * ike_sa_create(ike_sa_id_t *ike_sa_id, bool initiator,
 	this->task_manager = task_manager_create(&this->public);
 	this->my_host->set_port(this->my_host,
 							charon->socket->get_port(charon->socket, FALSE));
+#ifdef VOWIFI_CFG
+	this->terminated_from_service = 0;
+	this->vip_thread_started = FALSE;
+	this->tun = NULL;
+	this->mtu = 0;
+#endif
+#ifdef VOWIFI_PMTU_DISCOVERY
+	this->pmtu_sock = -1;
+#endif
+#ifdef VOWIFI_USE_TIMER
+	this->keepalive_timer_id = NULL;
+	this->dpd_timer_id = NULL;
 
+	struct sigevent evt = {0};
+	/* keep-alive timer */
+	evt.sigev_notify = SIGEV_THREAD;
+	evt.sigev_value.sival_ptr = (void*)this->ike_sa_id;
+	evt.sigev_notify_function = &keepalive_timer_callback;
+	evt.sigev_notify_attributes = NULL;
+	if (timer_create(CLOCK_BOOTTIME_ALARM, &evt, &this->keepalive_timer_id) < 0) {
+		DBG1(DBG_IKE, "Failed to create keep-alive timer: %s", strerror(errno));
+		this->keepalive_timer_id = NULL;
+		destroy(this);
+		return NULL;
+	}
+	/* DPD timer */
+	evt.sigev_notify = SIGEV_THREAD;
+	evt.sigev_value.sival_ptr = (void*)this->ike_sa_id;
+	evt.sigev_notify_function = &dpd_timer_callback;
+	evt.sigev_notify_attributes = NULL;
+	if (timer_create(CLOCK_BOOTTIME_ALARM, &evt, &this->dpd_timer_id) < 0) {
+		DBG1(DBG_IKE, "Failed to create DPD timer: %s", strerror(errno));
+		this->dpd_timer_id = NULL;
+		destroy(this);
+		return NULL;
+	}
+#endif
 	if (!this->task_manager || !this->keymat)
 	{
 		DBG1(DBG_IKE, "IKE version %d not supported", this->version);

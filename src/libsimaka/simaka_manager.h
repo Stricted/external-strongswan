@@ -90,7 +90,11 @@ struct simaka_manager_t {
 	status_t (*card_get_quintuplet)(simaka_manager_t *this, identification_t *id,
 								char rand[AKA_RAND_LEN], char autn[AKA_AUTN_LEN],
 								char ck[AKA_CK_LEN], char ik[AKA_IK_LEN],
+#ifndef VOWIFI_CFG
 								char res[AKA_RES_MAX], int *res_len);
+#else
+								char res[AKA_RES_MAX], int *res_len, char* sa_name);
+#endif
 
 	/**
 	 * Calculate resynchronization data on one of the registered SIM cards.

@@ -231,7 +231,11 @@ process_t* process_start_shell(char *const envp[], int *in, int *out, int *err,
 							   char *fmt, ...)
 {
 	char *argv[] = {
+#ifdef VOWIFI_CFG
+		"/system/bin/sh",
+#else
 		"/bin/sh",
+#endif
 		"-c",
 		NULL,
 		NULL

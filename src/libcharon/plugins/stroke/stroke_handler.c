@@ -50,7 +50,21 @@ typedef struct {
 	char *name;
 	/** list of DNS attributes, as host_t */
 	linked_list_t *dns;
+#ifdef VOWIFI_CFG
+	/** list of P-CSCF attributes, as host_t */
+	linked_list_t *pcscf;
+	/** list of IMEI attributes */
+	linked_list_t *imei;
+#endif
 } attributes_t;
+
+#ifdef VOWIFI_CFG
+#define IMEI_MAX 	33
+typedef struct {
+	/* Device IMEI number*/
+	char imei[IMEI_MAX];
+} imei_t;
+#endif
 
 /**
  * Destroy an attributes_t entry
@@ -97,9 +111,99 @@ CALLBACK(attr_filter, bool,
 	return FALSE;
 }
 
+#ifdef VOWIFI_CFG
+/**
+ * Filter function to convert host to PCSCF configuration attributes
+ */
+CALLBACK(attr_pcscf_filter, bool,
+	ike_sa_t *ike_sa, enumerator_t *orig, va_list args)
+{
+	configuration_attribute_type_t *type;
+	chunk_t *data;
+	host_t *host;
+
+	VA_ARGS_VGET(args, type, data);
+
+	while (orig->enumerate(orig, &host))
+	{
+		switch (host->get_family(host))
+		{
+			case AF_INET:
+			switch (ike_sa->get_operator(ike_sa)) {
+				case OPERATOR_TYPE_DEFAULT:
+					*type = P_CSCF_IP4_ADDRESS;
+					break;
+				case OPERATOR_TYPE_TMO_ATT:
+					*type = P_CSCF_IP4_ADDRESS_OPR_TYPE_1;
+					break;
+				case OPERATOR_TYPE_VZW:
+					*type = P_CSCF_IP4_ADDRESS_OPR_TYPE_2;
+					break;
+				default:
+					*type = P_CSCF_IP4_ADDRESS;
+			}
+			break;
+			case AF_INET6:
+			switch (ike_sa->get_operator(ike_sa)) {
+				case OPERATOR_TYPE_DEFAULT:
+					*type = P_CSCF_IP6_ADDRESS;
+					break;
+				case OPERATOR_TYPE_TMO_ATT:
+					*type = P_CSCF_IP6_ADDRESS_OPR_TYPE_1;
+					break;
+				case OPERATOR_TYPE_VZW:
+					*type = P_CSCF_IP6_ADDRESS_OPR_TYPE_2;
+					break;
+				default:
+					*type = P_CSCF_IP6_ADDRESS;
+			}
+			break;
+			default:
+				continue;
+		}
+		if (host->is_anyaddr(host))
+		{
+			*data = chunk_empty;
+		}
+		else
+		{
+			*data = host->get_address(host);
+		}
+		return TRUE;
+	}
+	return FALSE;
+}
+/**
+ * Filter function to convert host to PCSCF configuration attributes
+ */
+CALLBACK(attr_imei_filter, bool,
+			void *lock, enumerator_t *orig, va_list args)
+{
+	configuration_attribute_type_t *type;
+	chunk_t *data;
+	imei_t *device_imei;
+
+	VA_ARGS_VGET(args, type, data);
+
+	while (orig->enumerate(orig, &device_imei))
+	{
+	    *type = DEVICE_IMEI;
+	    *data = chunk_create(device_imei->imei, strlen(device_imei->imei));
+		return TRUE;
+	}
+	return FALSE;
+}
+#endif
+
+#ifdef VOWIFI_CFG
+METHOD(attribute_handler_t, create_attribute_enumerator, enumerator_t*,
+	private_stroke_handler_t *this, ike_sa_t *ike_sa,
+	linked_list_t *vips, int attr_type)
+#else
 METHOD(attribute_handler_t, create_attribute_enumerator, enumerator_t*,
 	private_stroke_handler_t *this, ike_sa_t *ike_sa,
 	linked_list_t *vips)
+#endif
 {
 	peer_cfg_t *peer_cfg;
 	enumerator_t *enumerator;
@@ -116,10 +220,31 @@ METHOD(attribute_handler_t, create_attribute_enumerator, enumerator_t*,
 			if (streq(attr->name, peer_cfg->get_name(peer_cfg)))
 			{
 				enumerator->destroy(enumerator);
+#ifdef VOWIFI_CFG
+				if (attr_type == 0)
+				{
+#endif
 				return enumerator_create_filter(
 									attr->dns->create_enumerator(attr->dns),
 									attr_filter, this->lock,
 									(void*)this->lock->unlock);
+#ifdef VOWIFI_CFG
+				}
+				else if(attr_type == 1)
+				{
+					this->lock->unlock(this->lock);
+					return enumerator_create_filter(
+							attr->pcscf->create_enumerator(attr->pcscf),
+							attr_pcscf_filter, ike_sa, NULL);
+				}
+				else if(attr_type == 2)
+				{
+					return enumerator_create_filter(
+							attr->imei->create_enumerator(attr->imei),
+							attr_imei_filter, this->lock,
+							(void*)this->lock->unlock);
+				}
+#endif
 			}
 		}
 		enumerator->destroy(enumerator);
@@ -131,10 +256,15 @@ METHOD(attribute_handler_t, create_attribute_enumerator, enumerator_t*,
 METHOD(stroke_handler_t, add_attributes, void,
 	private_stroke_handler_t *this, stroke_msg_t *msg)
 {
+#ifdef VOWIFI_CFG
+	attributes_t *attr = NULL;
+#endif
 	if (msg->add_conn.me.dns)
 	{
 		enumerator_t *enumerator;
+#ifndef VOWIFI_CFG
 		attributes_t *attr = NULL;
+#endif
 		host_t *host;
 		char *token;
 
@@ -160,6 +290,10 @@ METHOD(stroke_handler_t, add_attributes, void,
 					INIT(attr,
 						.name = strdup(msg->add_conn.name),
 						.dns = linked_list_create(),
+#ifdef VOWIFI_CFG
+						.pcscf = linked_list_create(),
+						.imei = linked_list_create(),
+#endif
 					);
 				}
 				attr->dns->insert_last(attr->dns, host);
@@ -170,13 +304,89 @@ METHOD(stroke_handler_t, add_attributes, void,
 			}
 		}
 		enumerator->destroy(enumerator);
+#ifndef VOWIFI_CFG
 		if (attr)
 		{
 			this->lock->write_lock(this->lock);
 			this->attrs->insert_last(this->attrs, attr);
 			this->lock->unlock(this->lock);
 		}
+#endif
 	}
+#ifdef VOWIFI_CFG
+	if (msg->add_conn.pcscf)
+	{
+		enumerator_t *enumerator;
+		host_t *host;
+		char *token;
+
+		enumerator = enumerator_create_token(msg->add_conn.pcscf, ",", " ");
+		while (enumerator->enumerate(enumerator, &token))
+		{
+			if (streq(token, "%config") || streq(token, "%config4"))
+			{
+				host = host_create_any(AF_INET);
+			}
+			else if (streq(token, "%config6"))
+			{
+				host = host_create_any(AF_INET6);
+			}
+			else
+			{
+				host = host_create_from_string(token, 0);
+			}
+			if (host)
+			{
+				if (!attr)
+				{
+					INIT(attr,
+						.name = strdup(msg->add_conn.name),
+						.dns = linked_list_create(),
+						.pcscf = linked_list_create(),
+						.imei = linked_list_create(),
+					);
+				}
+				attr->pcscf->insert_last(attr->pcscf, host);
+			}
+			else
+			{
+				DBG1(DBG_CFG, "ignoring invalid PCSCF address '%s'", token);
+			}
+		}
+		enumerator->destroy(enumerator);
+	}
+
+	if (msg->add_conn.imei)
+	{
+		imei_t *device_imei;
+		INIT(device_imei);
+		if (device_imei)
+		{
+			strncpy(device_imei->imei, msg->add_conn.imei, IMEI_MAX - 1);
+			DBG1(DBG_CFG, " Adding IMEI: '%s'", device_imei->imei);
+			if (!attr)
+			{
+				INIT(attr,
+					.name = strdup(msg->add_conn.name),
+					.dns = linked_list_create(),
+					.pcscf = linked_list_create(),
+					.imei = linked_list_create(),
+				);
+			}
+			attr->imei->insert_last(attr->imei, device_imei);
+		}
+		else
+		{
+			DBG1(DBG_CFG, "Failed to add attribute IMEI: '%s'", msg->add_conn.imei);
+		}
+	}
+	if (attr)
+	{
+		this->lock->write_lock(this->lock);
+		this->attrs->insert_last(this->attrs, attr);
+		this->lock->unlock(this->lock);
+	}
+#endif
 }
 
 METHOD(stroke_handler_t, del_attributes, void,

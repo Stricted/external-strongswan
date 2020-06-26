@@ -150,7 +150,11 @@ static bool derive_ike_aead(private_keymat_v2_t *this, uint16_t alg,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_ei secret %B", &sk_ei);
+#else
 	DBG4(DBG_IKE, "Sk_ei secret %B", &sk_ei);
+#endif
 	if (!aead_i->set_key(aead_i, sk_ei))
 	{
 		goto failure;
@@ -160,7 +164,11 @@ static bool derive_ike_aead(private_keymat_v2_t *this, uint16_t alg,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_er secret %B", &sk_er);
+#else
 	DBG4(DBG_IKE, "Sk_er secret %B", &sk_er);
+#endif
 	if (!aead_r->set_key(aead_r, sk_er))
 	{
 		goto failure;
@@ -227,7 +235,11 @@ static bool derive_ike_traditional(private_keymat_v2_t *this, uint16_t enc_alg,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_ai secret %B", &sk_ai);
+#else
 	DBG4(DBG_IKE, "Sk_ai secret %B", &sk_ai);
+#endif
 	if (!signer_i->set_key(signer_i, sk_ai))
 	{
 		goto failure;
@@ -237,7 +249,11 @@ static bool derive_ike_traditional(private_keymat_v2_t *this, uint16_t enc_alg,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_ar secret %B", &sk_ar);
+#else
 	DBG4(DBG_IKE, "Sk_ar secret %B", &sk_ar);
+#endif
 	if (!signer_r->set_key(signer_r, sk_ar))
 	{
 		goto failure;
@@ -250,7 +266,11 @@ static bool derive_ike_traditional(private_keymat_v2_t *this, uint16_t enc_alg,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_ei secret %B", &sk_ei);
+#else
 	DBG4(DBG_IKE, "Sk_ei secret %B", &sk_ei);
+#endif
 	if (!crypter_i->set_key(crypter_i, sk_ei))
 	{
 		goto failure;
@@ -260,7 +280,11 @@ static bool derive_ike_traditional(private_keymat_v2_t *this, uint16_t enc_alg,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_er secret %B", &sk_er);
+#else
 	DBG4(DBG_IKE, "Sk_er secret %B", &sk_er);
+#endif
 	if (!crypter_r->set_key(crypter_r, sk_er))
 	{
 		goto failure;
@@ -423,7 +447,11 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_d secret %B", &this->skd);
+#else
 	DBG4(DBG_IKE, "Sk_d secret %B", &this->skd);
+#endif
 
 	if (!proposal->get_algorithm(proposal, ENCRYPTION_ALGORITHM, &alg, &key_size))
 	{
@@ -460,7 +488,11 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_pi secret %B", &key);
+#else
 	DBG4(DBG_IKE, "Sk_pi secret %B", &key);
+#endif
 	if (this->initiator)
 	{
 		this->skp_build = key;
@@ -473,7 +505,11 @@ METHOD(keymat_v2_t, derive_ike_keys, bool,
 	{
 		goto failure;
 	}
+#ifdef VOWIFI_CFG
+	DBG1(DBG_IKE, "Sk_pr secret %B", &key);
+#else
 	DBG4(DBG_IKE, "Sk_pr secret %B", &key);
+#endif
 	if (this->initiator)
 	{
 		this->skp_verify = key;

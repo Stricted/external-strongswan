@@ -124,6 +124,14 @@ struct simaka_card_t {
 	 */
 	identification_t* (*get_reauth)(simaka_card_t *this, identification_t *id,
 									char mk[HASH_SIZE_SHA1], uint16_t *counter);
+#ifdef VOWIFI_CFG
+	/**
+	* Provide IKE SA name to card
+	*
+	* Required for multi-SIM authentication
+	*/
+	void (*set_sa_name)(simaka_card_t *this, char *name);
+#endif
 };
 
 #endif /** SIMAKA_CARD_H_ @}*/

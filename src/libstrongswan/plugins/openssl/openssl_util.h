@@ -31,6 +31,9 @@
 #include <openssl/bn.h>
 #include <openssl/asn1.h>
 
+#if defined(VOWIFI_BORINGSSL) && defined (VOWIFI_CFG)
+#include <openssl/x509.h>
+#endif
 /**
  * Returns the length in bytes of a field element
  */

@@ -357,11 +357,27 @@ METHOD(task_manager_t, retransmit, status_t,
 
 		if (!mobike || !mobike->is_probing(mobike))
 		{
+#ifdef VOWIFI_CFG
+			double base = RETRANSMIT_BASE;
+			u_int  max_tries = RETRANSMIT_TRIES;
+
+			if (this->ike_sa->is_handover(this->ike_sa))
+			{
+				base = HO_RETRANSMIT_BASE;
+				max_tries = HO_RETRANSMIT_TRIES;
+			}
+			DBG1(DBG_IKE, "Retries: %d, range: %d\n", this->initiating.retransmitted, max_tries);
+
+			if (this->initiating.retransmitted <= max_tries)
+			{
+				timeout = (u_int32_t)(this->retransmit_timeout * 1000.0 *
+					pow(base, this->initiating.retransmitted));
+#else
 			if (this->initiating.retransmitted <= this->retransmit_tries)
 			{
 				timeout = (uint32_t)(this->retransmit_timeout * 1000.0 *
 					pow(this->retransmit_base, this->initiating.retransmitted));
-
+#endif
 				if (this->retransmit_limit)
 				{
 					timeout = min(timeout, this->retransmit_limit);
@@ -400,6 +416,17 @@ METHOD(task_manager_t, retransmit, status_t,
 				{
 					DBG1(DBG_IKE, "no route found to reach peer, MOBIKE update "
 						 "deferred");
+#ifdef VOWIFI_CFG
+					/* do not try to wait next attempt if we are already done and all failed */
+					if (this->initiating.retransmitted >= this->retransmit_tries)
+					{
+						DBG1(DBG_IKE, "giving up after %d retransmits",
+					 		this->initiating.retransmitted);
+						charon->bus->alert(charon->bus, ALERT_RETRANSMIT_SEND_TIMEOUT,
+								   	packet);
+						return DESTROY_ME;
+					}
+#endif
 					this->ike_sa->set_condition(this->ike_sa, COND_STALE, TRUE);
 					this->initiating.deferred = TRUE;
 					return SUCCESS;
@@ -1342,6 +1369,28 @@ static void send_notify_response(private_task_manager_t *this,
 }
 
 /**
+ * Check if a given task has been queued already
+ */
+static bool has_queued(private_task_manager_t *this, task_type_t type)
+{
+	enumerator_t *enumerator;
+	bool found = FALSE;
+	queued_task_t *queued;
+
+	enumerator = array_create_enumerator(this->queued_tasks);
+	while (enumerator->enumerate(enumerator, &queued))
+	{
+		if (queued->task->get_type(queued->task) == type)
+		{
+			found = TRUE;
+			break;
+		}
+	}
+	enumerator->destroy(enumerator);
+	return found;
+}
+
+/**
  * Send an INVALID_SYNTAX notify and destroy the IKE_SA for authenticated
  * messages.
  */
@@ -1430,6 +1479,19 @@ static status_t parse_message(private_task_manager_t *this, message_t *msg)
 			case FAILED:
 				DBG1(DBG_IKE, "integrity check failed");
 				/* ignored */
+#ifdef VOWIFI_CFG
+				if (has_queued(this, TASK_IKE_MOBIKE))
+				{
+					DBG1(DBG_IKE, "MOBIKE task was queued");
+					/* ignore error response for MOBIKE */
+					notify_payload_t* notify = msg->get_notify(msg, INVALID_IKE_SPI);
+					if (notify)
+					{
+						DBG1(DBG_IKE, "Ignore path probing attempt error. Server is alive and reachable");
+						return SUCCESS;
+					}
+				}
+#endif
 				break;
 			case INVALID_STATE:
 				DBG1(DBG_IKE, "found encrypted message, but no keys available");
@@ -1609,7 +1671,12 @@ METHOD(task_manager_t, process_message, status_t,
 				 me, other, notify_type_names, NO_PROPOSAL_CHOSEN);
 			send_notify_response(this, msg,
 								 NO_PROPOSAL_CHOSEN, chunk_empty);
+#ifndef VOWIFI_CFG
 			return DESTROY_ME;
+#else
+			/* deleting IKE_SA without config can cause crash, return success */
+			return SUCCESS;
+#endif
 		}
 		this->ike_sa->set_ike_cfg(this->ike_sa, ike_cfg);
 		ike_cfg->destroy(ike_cfg);
@@ -1784,28 +1851,6 @@ METHOD(task_manager_t, queue_task, void,
 	private_task_manager_t *this, task_t *task)
 {
 	queue_task_delayed(this, task, 0);
-}
-
-/**
- * Check if a given task has been queued already
- */
-static bool has_queued(private_task_manager_t *this, task_type_t type)
-{
-	enumerator_t *enumerator;
-	bool found = FALSE;
-	queued_task_t *queued;
-
-	enumerator = array_create_enumerator(this->queued_tasks);
-	while (enumerator->enumerate(enumerator, &queued))
-	{
-		if (queued->task->get_type(queued->task) == type)
-		{
-			found = TRUE;
-			break;
-		}
-	}
-	enumerator->destroy(enumerator);
-	return found;
 }
 
 METHOD(task_manager_t, queue_ike, void,
@@ -2119,6 +2164,13 @@ METHOD(task_manager_t, adopt_tasks, void,
 	{
 		DBG2(DBG_IKE, "migrating %N task", task_type_names,
 			 queued->task->get_type(queued->task));
+#ifdef VOWIFI_CFG
+		if (queued->task->get_type(queued->task) == TASK_IKE_DELETE)
+		{
+			DBG1(DBG_IKE, "do not migrate TASK_IKE_DELETE");
+			continue;
+		}
+#endif
 		queued->task->migrate(queued->task, this->ike_sa);
 		/* don't delay tasks on the new IKE_SA */
 		queued->time = now;

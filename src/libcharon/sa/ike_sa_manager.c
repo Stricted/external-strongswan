@@ -1290,6 +1290,11 @@ METHOD(ike_sa_manager_t, checkout_by_message, ike_sa_t*,
 		}
 		else
 		{
+#ifdef VOWIFI_CFG
+			DBG1(DBG_MGR, "ignoring message, IKEv1 is not expected");
+			id->destroy(id);
+			return NULL;
+#else
 			if (message->get_exchange_type(message) == ID_PROT ||
 				message->get_exchange_type(message) == AGGRESSIVE)
 			{
@@ -1300,6 +1305,7 @@ METHOD(ike_sa_manager_t, checkout_by_message, ike_sa_t*,
 					id->switch_initiator(id);
 				}
 			}
+#endif
 		}
 	}
 

@@ -22,6 +22,10 @@
 #include <processing/jobs/rekey_ike_sa_job.h>
 #include <processing/jobs/rekey_child_sa_job.h>
 
+#ifdef VOWIFI_CFG
+#include "charon_comm_interface.h"
+#endif
+
 typedef struct private_stroke_control_t private_stroke_control_t;
 
 /**
@@ -65,6 +69,9 @@ struct stroke_log_info_t {
 static bool stroke_log(stroke_log_info_t *info, debug_t group, level_t level,
 					   ike_sa_t *ike_sa, char *message)
 {
+#ifdef VOWIFI_CFG
+	/*Do Nothing.... Send no logs to charon client side....*/
+#else
 	if (level <= info->level)
 	{
 		if (fprintf(info->out, "%s", message) < 0 ||
@@ -74,6 +81,7 @@ static bool stroke_log(stroke_log_info_t *info, debug_t group, level_t level,
 			return FALSE;
 		}
 	}
+#endif
 	return TRUE;
 }
 
@@ -102,8 +110,13 @@ static child_cfg_t* get_child_from_peer(peer_cfg_t *peer_cfg, char *name)
 /**
  * call the charon controller to initiate the connection
  */
+#ifdef VOWIFI_CFG
+static void charon_initiate(private_stroke_control_t *this, peer_cfg_t *peer_cfg,
+							child_cfg_t *child_cfg, stroke_msg_t *msg, FILE *out, int index)
+#else
 static void charon_initiate(private_stroke_control_t *this, peer_cfg_t *peer_cfg,
 							child_cfg_t *child_cfg, stroke_msg_t *msg, FILE *out)
+#endif
 {
 	if (msg->output_verbosity < 0)
 	{
@@ -121,15 +134,24 @@ static void charon_initiate(private_stroke_control_t *this, peer_cfg_t *peer_cfg
 		switch (status)
 		{
 			case SUCCESS:
+#ifdef VOWIFI_CFG
+				charon_send_initiate_success(msg, index);
+#endif
 				fprintf(out, "connection '%s' established successfully\n",
 						msg->initiate.name);
 				break;
 			case OUT_OF_RES:
+#ifdef VOWIFI_CFG
+				charon_send_initate_failure(msg, index);
+#endif
 				fprintf(out, "connection '%s' not established after %dms, "
 						"detaching\n", msg->initiate.name, this->timeout);
 				break;
 			default:
 			case FAILED:
+#ifdef VOWIFI_CFG
+				charon_send_initate_failure(msg, index);
+#endif
 				fprintf(out, "establishing connection '%s' failed\n",
 						msg->initiate.name);
 				break;
@@ -144,6 +166,9 @@ METHOD(stroke_control_t, initiate, void,
 	peer_cfg_t *peer_cfg;
 	enumerator_t *enumerator;
 	bool empty = TRUE;
+#ifdef VOWIFI_CFG
+	int index = get_alerts_index(msg->initiate.name);
+#endif
 
 	peer_cfg = charon->backends->get_peer_cfg_by_name(charon->backends,
 													  msg->initiate.name);
@@ -156,15 +181,22 @@ METHOD(stroke_control_t, initiate, void,
 			while (enumerator->enumerate(enumerator, &child_cfg))
 			{
 				empty = FALSE;
+#ifdef VOWIFI_CFG
+				charon_initiate(this, peer_cfg->get_ref(peer_cfg),
+								child_cfg->get_ref(child_cfg), msg, out, index);
+#else
 				charon_initiate(this, peer_cfg->get_ref(peer_cfg),
 								child_cfg->get_ref(child_cfg), msg, out);
+#endif
 			}
 			enumerator->destroy(enumerator);
 
 			if (empty)
 			{
+#ifdef VOWIFI_CFG
+				charon_send_initate_failure(msg, index);
+#endif
 				DBG1(DBG_CFG, "no child config named '%s'", msg->initiate.name);
-				fprintf(out, "no child config named '%s'\n", msg->initiate.name);
 			}
 			peer_cfg->destroy(peer_cfg);
 			return;
@@ -187,12 +219,18 @@ METHOD(stroke_control_t, initiate, void,
 
 		if (child_cfg == NULL)
 		{
+#ifdef VOWIFI_CFG
+			charon_send_initate_failure(msg, index);
+#endif
 			DBG1(DBG_CFG, "no config named '%s'", msg->initiate.name);
-			fprintf(out, "no config named '%s'\n", msg->initiate.name);
 			return;
 		}
 	}
+#ifdef VOWIFI_CFG
+	charon_initiate(this, peer_cfg, child_cfg, msg, out, index);
+#else
 	charon_initiate(this, peer_cfg, child_cfg, msg, out);
+#endif
 }
 
 /**
@@ -265,8 +303,13 @@ static bool parse_specifier(char *string, uint32_t *id,
 /**
  * Report the result of a terminate() call to console
  */
+#ifdef VOWIFI_CFG
+static void report_terminate_status(private_stroke_control_t *this,
+						status_t status, FILE *out, uint32_t id, bool child, stroke_msg_t *msg, bool reply, int index)
+#else
 static void report_terminate_status(private_stroke_control_t *this,
 						status_t status, FILE *out, uint32_t id, bool child)
+#endif
 {
 	char *prefix, *postfix;
 
@@ -285,14 +328,32 @@ static void report_terminate_status(private_stroke_control_t *this,
 	{
 		case SUCCESS:
 			fprintf(out, "%s%d%s closed successfully\n", prefix, id, postfix);
+#ifdef VOWIFI_CFG
+			if (reply && msg->type == STR_TERMINATE)
+			{
+				charon_send_terminate_response(CHARON_ERR_SUCCESS, msg, index);
+			}
+#endif
 			break;
 		case OUT_OF_RES:
 			fprintf(out, "%s%d%s not closed after %dms, detaching\n",
 					prefix, id, postfix, this->timeout);
+#ifdef VOWIFI_CFG
+			if (reply && msg->type == STR_TERMINATE)
+			{
+				charon_send_terminate_response(CHARON_ERR_UNKNOWN, msg, index);
+            		}
+#endif
 			break;
 		default:
 		case FAILED:
 			fprintf(out, "closing %s%d%s failed\n", prefix, id, postfix);
+#ifdef VOWIFI_CFG
+			if (reply && msg->type == STR_TERMINATE )
+			{
+				charon_send_terminate_response(CHARON_ERR_UNKNOWN, msg, index);
+            		}
+#endif
 			break;
 	}
 }
@@ -303,6 +364,9 @@ static void report_terminate_status(private_stroke_control_t *this,
 static void charon_terminate(private_stroke_control_t *this, uint32_t id,
 							 stroke_msg_t *msg, FILE *out, bool child)
 {
+#ifdef VOWIFI_CFG
+	int index = get_alerts_index(msg->terminate.name);
+#endif
 	if (msg->output_verbosity >= 0)
 	{
 		stroke_log_info_t info = { msg->output_verbosity, out };
@@ -319,7 +383,11 @@ static void charon_terminate(private_stroke_control_t *this, uint32_t id,
 							FALSE, (controller_cb_t)stroke_log, &info,
 							this->timeout);
 		}
+#ifdef VOWIFI_CFG
+		report_terminate_status(this, status, out, id, child, msg, TRUE, index);
+#else
 		report_terminate_status(this, status, out, id, child);
+#endif
 	}
 	else if (child)
 	{
@@ -344,6 +412,9 @@ METHOD(stroke_control_t, terminate, void,
 	linked_list_t *ike_list, *child_list;
 	uintptr_t del;
 
+#ifdef VOWIFI_CFG
+	int index = get_alerts_index(msg->terminate.name);
+#endif
 	if (!parse_specifier(msg->terminate.name, &id, &name, &child, &all))
 	{
 		DBG1(DBG_CFG, "error parsing specifier string");
@@ -387,6 +458,9 @@ METHOD(stroke_control_t, terminate, void,
 		}
 		else if (streq(name, ike_sa->get_name(ike_sa)))
 		{
+#ifdef VOWIFI_CFG
+			ike_sa->set_terminate(ike_sa);
+#endif
 			ike_list->insert_last(ike_list,
 						(void*)(uintptr_t)ike_sa->get_unique_id(ike_sa));
 			if (!all)
@@ -416,6 +490,15 @@ METHOD(stroke_control_t, terminate, void,
 	{
 		DBG1(DBG_CFG, "no %s_SA named '%s' found",
 			 child ? "CHILD" : "IKE", name);
+#ifdef VOWIFI_CFG
+		charon_send_terminate_response(CHARON_ERR_UNKNOWN, msg, index);
+#endif
+	}
+	else
+	{
+#ifdef VOWIFI_CFG
+		charon_send_terminate_response(CHARON_ERR_SUCCESS, msg, index);
+#endif
 	}
 	ike_list->destroy(ike_list);
 	child_list->destroy(child_list);

@@ -42,6 +42,10 @@ OPENSSL_KEY_FALLBACK(RSA, crt_params, dmp1, dmq1, iqmp)
 #define BN_secure_new() BN_new()
 #endif
 
+#ifdef OPENSSL_IS_BORINGSSL
+#define BN_secure_new() BN_new()
+#endif
+
 typedef struct private_openssl_rsa_private_key_t private_openssl_rsa_private_key_t;
 
 /**

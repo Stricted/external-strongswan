@@ -35,6 +35,12 @@
 #include "stroke_list.h"
 #include "stroke_counter.h"
 
+#ifdef VOWIFI_CFG
+#include <kernel/kernel_interface.h>
+#include <private/android_filesystem_config.h> /* for AID_VPN */
+#include "charon_comm_interface.h"
+#include <linux/xfrm.h>
+#endif
 /**
  * To avoid clogging the thread pool with (blocking) jobs, we limit the number
  * of concurrently handled stroke commands.
@@ -193,8 +199,12 @@ static void pop_end(stroke_msg_t *msg, const char* label, stroke_end_t *end)
 static void stroke_add_conn(private_stroke_socket_t *this, stroke_msg_t *msg)
 {
 	pop_string(msg, &msg->add_conn.name);
+#ifdef VOWIFI_CFG
+	pop_string(msg, &msg->add_conn.interface);
+	DBG1(DBG_CFG, "received stroke: add connection '%s' on %s", msg->add_conn.name, msg->add_conn.interface);
+#else
 	DBG1(DBG_CFG, "received stroke: add connection '%s'", msg->add_conn.name);
-
+#endif
 	DBG2(DBG_CFG, "conn %s", msg->add_conn.name);
 	pop_end(msg, "left", &msg->add_conn.me);
 	pop_end(msg, "right", &msg->add_conn.other);
@@ -206,6 +216,10 @@ static void stroke_add_conn(private_stroke_socket_t *this, stroke_msg_t *msg)
 	pop_string(msg, &msg->add_conn.algorithms.ah);
 	pop_string(msg, &msg->add_conn.ikeme.mediated_by);
 	pop_string(msg, &msg->add_conn.ikeme.peerid);
+#ifdef VOWIFI_CFG
+	pop_string(msg, &msg->add_conn.pcscf);
+	pop_string(msg, &msg->add_conn.imei);
+#endif
 	DBG_OPT("  eap_identity=%s", msg->add_conn.eap_identity);
 	DBG_OPT("  aaa_identity=%s", msg->add_conn.aaa_identity);
 	DBG_OPT("  xauth_identity=%s", msg->add_conn.xauth_identity);
@@ -221,6 +235,10 @@ static void stroke_add_conn(private_stroke_socket_t *this, stroke_msg_t *msg)
 	DBG_OPT("  mediated_by=%s", msg->add_conn.ikeme.mediated_by);
 	DBG_OPT("  me_peerid=%s", msg->add_conn.ikeme.peerid);
 	DBG_OPT("  keyexchange=ikev%u", msg->add_conn.version);
+#ifdef VOWIFI_CFG
+	DBG_OPT("  pcscf=%s", msg->add_conn.pcscf);
+	DBG_OPT("  imei=%s", msg->add_conn.imei);
+#endif
 
 	this->config->add(this->config, msg);
 	this->attribute->add_dns(this->attribute, msg);
@@ -608,6 +626,56 @@ static void stroke_config(private_stroke_socket_t *this,
 	this->cred->cachecrl(this->cred, msg->config.cachecrl);
 }
 
+#ifdef VOWIFI_CFG
+static void stroke_add_route(private_stroke_socket_t *this, stroke_msg_t *msg, FILE *out)
+{
+	host_t *src_host, *dst_host;
+	int len;
+
+	pop_string(msg, &msg->add_route.src);
+	pop_string(msg, &msg->add_route.dst);
+	pop_string(msg, &msg->add_route.interface);
+    	DBG1(DBG_CFG,"received stroke: add route for SRC: %s DST: %s IF: %s\n", msg->add_route.src, msg->add_route.dst, msg->add_route.interface);
+
+	len = (strchr(msg->add_route.src, ':') != NULL) ? 128 : 32;
+
+	src_host = host_create_from_string(msg->add_route.src, 0);
+	dst_host = host_create_from_string(msg->add_route.dst, 0);
+	if (charon->kernel->add_route(charon->kernel,
+		dst_host->get_address(dst_host), len, NULL, src_host, msg->add_route.interface) == SUCCESS) {
+		DBG1(DBG_CFG,"route to %s was added successfully\n", msg->add_route.dst);
+	}
+	dst_host->destroy(dst_host);
+	src_host->destroy(src_host);
+
+	charon_send_route_response(RES_ADD_ROUTE, msg);
+}
+
+static void stroke_del_route(private_stroke_socket_t *this, stroke_msg_t *msg, FILE *out)
+{
+	host_t *src_host, *dst_host;
+	int len;
+
+	pop_string(msg, &msg->del_route.src);
+	pop_string(msg, &msg->del_route.dst);
+	pop_string(msg, &msg->del_route.interface);
+    	DBG1(DBG_CFG,"received stroke: del route for SRC: %s DST: %s IF: %s\n", msg->del_route.src, msg->del_route.dst, msg->del_route.interface);
+
+	len = (strchr(msg->del_route.src, ':') != NULL) ? 128 : 32;
+
+	src_host = host_create_from_string(msg->del_route.src, 0);
+	dst_host = host_create_from_string(msg->del_route.dst, 0);
+	if (charon->kernel->del_route(charon->kernel,
+		dst_host->get_address(dst_host), len, NULL, src_host, msg->del_route.interface) == SUCCESS) {
+		DBG1(DBG_CFG,"route to %s was deleted successfully\n", msg->del_route.dst);
+	}
+	dst_host->destroy(dst_host);
+	src_host->destroy(src_host);
+
+	charon_send_route_response(RES_DEL_ROUTE, msg);
+}
+#endif
+
 /**
  * process a stroke request
  */
@@ -658,6 +726,11 @@ static bool on_accept(private_stroke_socket_t *this, stream_t *stream)
 		free(msg);
 		return FALSE;
 	}
+#ifdef VOWIFI_CFG
+	/* swap out */
+	msg->out = out;
+	out = stdout;
+#endif
 	switch (msg->type)
 	{
 		case STR_INITIATE:
@@ -689,9 +762,17 @@ static bool on_accept(private_stroke_socket_t *this, stream_t *stream)
 			break;
 		case STR_ADD_CONN:
 			stroke_add_conn(this, msg);
+#ifdef VOWIFI_CFG
+			DBG1(DBG_CFG, "%s successfully added", msg->add_conn.name);
+			charon_send_conn_response(RES_ADD_CONN, msg);
+#endif
 			break;
 		case STR_DEL_CONN:
 			stroke_del_conn(this, msg);
+#ifdef VOWIFI_CFG
+			DBG1(DBG_CFG, "%s successfully deleted", msg->del_conn.name);
+			charon_send_conn_response(RES_DEL_CONN, msg);
+#endif
 			break;
 		case STR_ADD_CA:
 			stroke_add_ca(this, msg, out);
@@ -729,12 +810,25 @@ static bool on_accept(private_stroke_socket_t *this, stream_t *stream)
 		case STR_COUNTERS:
 			stroke_counters(this, msg, out);
 			break;
+#ifdef VOWIFI_CFG
+		case STR_ADD_ROUTE:
+			stroke_add_route(this, msg, out);
+			break;
+		case STR_DEL_ROUTE:
+			stroke_del_route(this, msg, out);
+			break;
+#endif
 		default:
 			DBG1(DBG_CFG, "received unknown stroke");
 			break;
 	}
-	free(msg);
+
+#ifdef VOWIFI_CFG
+	fclose(msg->out);
+#else
 	fclose(out);
+#endif
+	free(msg);
 	return FALSE;
 }
 
@@ -807,6 +901,28 @@ stroke_socket_t *stroke_socket_create()
 		destroy(this);
 		return NULL;
 	}
+#ifdef VOWIFI_CFG
+	{
+		time_t t1;
+
+#if UINTPTR_MAX == 0xffffffff
+		/* 32-bit */
+		DBG1(DBG_CFG," Strongswan 5.8.2-32bit, built at %s %s", __DATE__, __TIME__);
+#elif UINTPTR_MAX == 0xffffffffffffffff
+		/* 64-bit */
+		DBG1(DBG_CFG," Strongswan 5.8.2-64bit, built at %s %s", __DATE__, __TIME__);
+#else
+		/* unknown */
+#endif
+		time(&t1);
+		DBG1(DBG_CFG," Created stroke socket at time: %s", ctime(&t1));
+    		DBG1(DBG_CFG, "Changing owner to: %d", AID_RADIO);
+    		if(chown( STROKE_SOCKET, AID_RADIO, AID_RADIO) == -1)
+		{
+			DBG1(DBG_CFG, "chown failed for socket: %s", strerror(errno));
+    		}
+	}
+#endif
 	this->service->on_accept(this->service, (stream_service_cb_t)on_accept,
 							 this, JOB_PRIO_CRITICAL, max_concurrent);
 

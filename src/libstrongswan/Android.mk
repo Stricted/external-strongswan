@@ -62,6 +62,7 @@ libstrongswan_la_SOURCES += \
 libstrongswan_la_SOURCES += utils/printf_hook/printf_hook_builtin.c
 
 LOCAL_SRC_FILES := $(libstrongswan_la_SOURCES)
+LOCAL_SHARED_LIBRARIES += libcutils
 
 # adding the plugin source files
 
@@ -126,6 +127,9 @@ LOCAL_SRC_FILES += $(call add_plugin, x509)
 
 LOCAL_SRC_FILES += $(call add_plugin, xcbc)
 
+ifneq ($(strongswan_BUILD_VoWiFi),)
+LOCAL_SRC_FILES += $(call add_plugin, ctr)
+endif
 # build libstrongswan ----------------------------------------------------------
 
 LOCAL_CFLAGS := $(strongswan_CFLAGS)
@@ -136,7 +140,11 @@ LOCAL_MODULE_TAGS := optional
 
 LOCAL_ARM_MODE := arm
 
+LOCAL_PROPRIETARY_MODULE := true
+
 LOCAL_PRELINK_MODULE := false
+
+LOCAL_C_INCLUDES += system/core/include
 
 LOCAL_LDLIBS += -ldl
 
